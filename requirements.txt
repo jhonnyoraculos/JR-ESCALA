@@ -1,3 +1,6 @@
+# For Streamlit Cloud (fixes installer issues)
+--only-binary=:all:
+
 Pillow==11.1.0
 openpyxl==3.1.2
 streamlit==1.32.0
