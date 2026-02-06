@@ -343,6 +343,7 @@ def _init_state() -> None:
     )
     st.session_state.setdefault("permitir_mot_aj", False)
     st.session_state.setdefault("carreg_edit_id", None)
+    st.session_state.setdefault("carreg_last_edit_id", None)
     st.session_state.setdefault("oficina_edit_id", None)
     st.session_state.setdefault("folga_edit_id", None)
     st.session_state.setdefault("escala_edit_id", None)
@@ -567,6 +568,23 @@ def page_carregamentos() -> None:
                 )
 
     st.markdown("### Carregamentos do dia")
+    form_keys = [
+        "carreg_form_data",
+        "carreg_form_saida",
+        "carreg_form_placa",
+        "carreg_form_rota_num",
+        "carreg_form_rota_destino",
+        "carreg_form_obs",
+        "carreg_form_motorista",
+        "carreg_form_ajudante",
+        "carreg_form_obs_extra",
+        "carreg_form_cor",
+    ]
+
+    def _reset_carreg_form_state() -> None:
+        for key in form_keys:
+            st.session_state.pop(key, None)
+
     carregamentos_dia = sorted(registros, key=_numero_rota_ordem)
     options = ["Selecionar carregamento"]
     carreg_map = {}
@@ -594,6 +612,10 @@ def page_carregamentos() -> None:
         key="carreg_select",
     )
     st.session_state["carreg_edit_id"] = carreg_map.get(selected_label)
+    current_edit_id = st.session_state.get("carreg_edit_id")
+    if current_edit_id != st.session_state.get("carreg_last_edit_id"):
+        _reset_carreg_form_state()
+        st.session_state["carreg_last_edit_id"] = current_edit_id
     st.caption("PEND = pendente, OK = revisado")
 
     edit_id = st.session_state.get("carreg_edit_id")
