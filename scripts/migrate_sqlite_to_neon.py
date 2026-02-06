@@ -99,8 +99,8 @@ def main() -> int:
     if not db.USE_POSTGRES:
         print("Falha ao configurar Postgres. Verifique a URL.")
         return 1
-    if db.psycopg2 is None:
-        print("psycopg2 nao instalado. Instale as dependencias antes de migrar.")
+    if db.psycopg2 is None and getattr(db, "psycopg", None) is None:
+        print("Driver Postgres nao instalado. Instale as dependencias antes de migrar.")
         return 1
 
     db.init_db()

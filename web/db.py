@@ -11,6 +11,13 @@ try:
 except Exception:  # psycopg2 pode nao estar instalado localmente
     psycopg2 = None
 
+try:
+    import psycopg
+    from psycopg import rows as pg_rows
+except Exception:  # psycopg (v3) pode nao estar instalado localmente
+    psycopg = None
+    pg_rows = None
+
 BASE_DIR = Path(__file__).resolve().parent
 
 DB_PATH = Path(os.environ.get("JR_ESCALA_DB_PATH", BASE_DIR / "jr_escala_web.db"))
@@ -28,6 +35,8 @@ USE_POSTGRES = bool(DATABASE_URL)
 
 if USE_POSTGRES and psycopg2:
     DBError = psycopg2.Error
+elif USE_POSTGRES and psycopg:
+    DBError = psycopg.Error
 else:
     DBError = sqlite3.Error
 
@@ -67,15 +76,67 @@ if psycopg2:
             return super().executemany(_translate_query(query), vars_list)
 
 
+class _PsycopgCursorWrapper:
+    def __init__(self, cur):
+        self._cur = cur
+
+    def execute(self, query, vars=None):
+        return self._cur.execute(_translate_query(query), vars)
+
+    def executemany(self, query, vars_list):
+        return self._cur.executemany(_translate_query(query), vars_list)
+
+    def __iter__(self):
+        return iter(self._cur)
+
+    def __getattr__(self, name):
+        return getattr(self._cur, name)
+
+
+class _PsycopgConnWrapper:
+    def __init__(self, conn, dict_rows: bool):
+        self._conn = conn
+        self._dict_rows = dict_rows
+
+    def cursor(self):
+        if self._dict_rows and pg_rows:
+            cur = self._conn.cursor(row_factory=pg_rows.dict_row)
+        else:
+            cur = self._conn.cursor()
+        return _PsycopgCursorWrapper(cur)
+
+    def commit(self):
+        return self._conn.commit()
+
+    def rollback(self):
+        return self._conn.rollback()
+
+    def close(self):
+        return self._conn.close()
+
+    def __enter__(self):
+        self._conn.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return self._conn.__exit__(exc_type, exc, tb)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
 def get_connection(dict_rows: bool = False):
     ensure_dirs()
     if USE_POSTGRES:
-        if psycopg2 is None:
-            raise RuntimeError("psycopg2 nao esta instalado para conexao PostgreSQL.")
-        cursor_factory = QmarkDictCursor if dict_rows else QmarkCursor
         sslmode = os.environ.get("JR_ESCALA_DB_SSLMODE", "require")
-        conn = psycopg2.connect(DATABASE_URL, sslmode=sslmode, cursor_factory=cursor_factory)
-        return conn
+        if psycopg2 is not None:
+            cursor_factory = QmarkDictCursor if dict_rows else QmarkCursor
+            conn = psycopg2.connect(DATABASE_URL, sslmode=sslmode, cursor_factory=cursor_factory)
+            return conn
+        if psycopg is not None:
+            conn = psycopg.connect(DATABASE_URL, sslmode=sslmode)
+            return _PsycopgConnWrapper(conn, dict_rows)
+        raise RuntimeError("Driver PostgreSQL nao instalado (psycopg2/psycopg).")
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA foreign_keys = ON;")
     if dict_rows:
