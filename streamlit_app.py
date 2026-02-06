@@ -352,9 +352,34 @@ def _init_state() -> None:
     st.session_state.setdefault("colab_edit_id", None)
 
 
+@st.cache_data(ttl=10)
+def _cache_listar_carregamentos(data_iso: str) -> list[dict]:
+    return svc.listar_carregamentos(data_iso)
+
+
+@st.cache_data(ttl=30)
+def _cache_listar_colaboradores_por_funcao(funcao: str, data_iso: str | None = None) -> list[dict]:
+    return svc.listar_colaboradores_por_funcao(funcao, data_iso)
+
+
+@st.cache_data(ttl=30)
+def _cache_listar_caminhoes_ativos() -> list[dict]:
+    return svc.listar_caminhoes_ativos()
+
+
+@st.cache_data(ttl=10)
+def _cache_disponibilidade(data_iso: str, ignorar_items: tuple[tuple[str, int], ...]) -> dict:
+    ignorar = dict(ignorar_items) if ignorar_items else None
+    return svc.verificar_disponibilidade(data_iso, ignorar)
+
+
+def _clear_cached_data() -> None:
+    st.cache_data.clear()
+
+
 def _assistentes_sidebar(data_iso: str) -> None:
     with st.sidebar.expander("Rotas pendentes", expanded=False):
-        registros = svc.listar_carregamentos(data_iso)
+        registros = _cache_listar_carregamentos(data_iso)
         pendentes = []
         for item in registros:
             if item.get("revisado"):
@@ -376,8 +401,8 @@ def _assistentes_sidebar(data_iso: str) -> None:
                 st.write(f"- {item['label']}")
 
     with st.sidebar.expander("Disponíveis do dia", expanded=False):
-        motoristas = svc.listar_colaboradores_por_funcao("Motorista", data_iso)
-        ajudantes = svc.listar_colaboradores_por_funcao("Ajudante", data_iso)
+        motoristas = _cache_listar_colaboradores_por_funcao("Motorista", data_iso)
+        ajudantes = _cache_listar_colaboradores_por_funcao("Ajudante", data_iso)
         st.write("Motoristas")
         if motoristas:
             for item in sorted([m.get("nome") for m in motoristas if m.get("nome")]):
@@ -426,10 +451,11 @@ def page_carregamentos() -> None:
     st.session_state["carreg_data_iso"] = data_iso
     st.session_state["carreg_data_saida_iso"] = data_saida_iso
 
-    registros = svc.listar_carregamentos(data_iso)
+    registros = _cache_listar_carregamentos(data_iso)
     if not registros:
         svc.preencher_carregamentos_automaticos(data_iso, data_saida_iso)
-        registros = svc.listar_carregamentos(data_iso)
+        _clear_cached_data()
+        registros = _cache_listar_carregamentos(data_iso)
 
     for item in registros:
         item["data_saida"] = svc.obter_data_saida_registro(item)
@@ -459,6 +485,7 @@ def page_carregamentos() -> None:
                     _set_flash("success", "Todas as rotas semanais ja estao carregadas.")
             except Exception as exc:
                 _set_flash("error", f"Erro ao recarregar rotas semanais: {exc}")
+            _clear_cached_data()
             st.rerun()
     elif st.session_state.get("carreg_confirm_limpar"):
         if _confirm_prompt(
@@ -466,7 +493,7 @@ def page_carregamentos() -> None:
             "Limpar alterações do dia e recarregar rotas semanais?",
         ):
             try:
-                registros_dia = svc.listar_carregamentos(data_iso)
+                registros_dia = _cache_listar_carregamentos(data_iso)
                 for item in registros_dia:
                     svc.remover_carregamento_completo(item["id"])
                 svc.limpar_rotas_suprimidas(data_iso)
@@ -482,6 +509,7 @@ def page_carregamentos() -> None:
                 _set_flash("success", msg)
             except Exception as exc:
                 _set_flash("error", f"Erro ao limpar alterações: {exc}")
+            _clear_cached_data()
             st.rerun()
     elif st.session_state.get("carreg_confirm_dup") is not None:
         dup_id = st.session_state.get("carreg_confirm_dup")
@@ -494,6 +522,7 @@ def page_carregamentos() -> None:
             except Exception as exc:
                 _set_flash("error", f"Erro ao duplicar: {exc}")
             st.session_state["carreg_edit_id"] = None
+            _clear_cached_data()
             st.rerun()
     elif st.session_state.get("carreg_confirm_excluir") is not None:
         excluir_id = st.session_state.get("carreg_confirm_excluir")
@@ -507,6 +536,7 @@ def page_carregamentos() -> None:
             except Exception as exc:
                 _set_flash("error", f"Erro ao excluir: {exc}")
             st.session_state["carreg_edit_id"] = None
+            _clear_cached_data()
             st.rerun()
 
     action_cols = st.columns([2, 2, 2])
@@ -608,12 +638,11 @@ def page_carregamentos() -> None:
         else:
             rota_num = rota_texto.strip()
 
-    disponibilidade = svc.verificar_disponibilidade(
-        data_iso, {"carregamento_id": edit_id} if edit_id else None
-    )
+    ignorar = (("carregamento_id", edit_id),) if edit_id else ()
+    disponibilidade = _cache_disponibilidade(data_iso, ignorar)
 
-    motoristas = svc.listar_colaboradores_por_funcao("Motorista")
-    ajudantes_base = svc.listar_colaboradores_por_funcao("Ajudante")
+    motoristas = _cache_listar_colaboradores_por_funcao("Motorista")
+    ajudantes_base = _cache_listar_colaboradores_por_funcao("Ajudante")
     ajudantes_ids = {a.get("id") for a in ajudantes_base}
     ajudantes = ajudantes_base + [
         {
@@ -628,7 +657,7 @@ def page_carregamentos() -> None:
     if not permitir_mot_aj:
         ajudantes = [a for a in ajudantes if not a.get("mot_aj")]
 
-    caminhoes = svc.listar_caminhoes_ativos()
+    caminhoes = _cache_listar_caminhoes_ativos()
 
     def _filtrar_disponiveis(lista, indisponiveis, selecionado):
         resultado = []
@@ -772,9 +801,8 @@ def page_carregamentos() -> None:
             _set_flash("error", "Informe rota e destino.")
             st.rerun()
         rota_texto = f"{rota_num_valor.strip()} - {rota_destino_valor.strip()}"
-        disponibilidade_submit = svc.verificar_disponibilidade(
-            form_data_iso, {"carregamento_id": edit_id} if edit_id else None
-        )
+        ignorar = (("carregamento_id", edit_id),) if edit_id else ()
+        disponibilidade_submit = _cache_disponibilidade(form_data_iso, ignorar)
         indis = disponibilidade_submit.get("motoristas", set()).union(
             disponibilidade_submit.get("ajudantes", set())
         )
@@ -828,6 +856,7 @@ def page_carregamentos() -> None:
                 _set_flash("success", "Carregamento salvo.")
         except Exception as exc:
             _set_flash("error", f"Erro ao salvar: {exc}")
+        _clear_cached_data()
         st.session_state["carreg_edit_id"] = None
         st.rerun()
 
