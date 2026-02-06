@@ -602,6 +602,12 @@ def page_carregamentos() -> None:
                 index = idx
                 break
 
+    # Compatibilidade com estado antigo do selectbox (string em vez de tupla).
+    if "carreg_select" in st.session_state and not isinstance(
+        st.session_state.get("carreg_select"), (tuple, list)
+    ):
+        st.session_state.pop("carreg_select", None)
+
     selected_option = st.selectbox(
         "Selecionar carregamento",
         options,
@@ -609,7 +615,20 @@ def page_carregamentos() -> None:
         key="carreg_select",
         format_func=lambda option: option[1],
     )
-    selected_id = selected_option[0]
+    selected_id = None
+    if isinstance(selected_option, (tuple, list)) and selected_option:
+        selected_id = selected_option[0]
+    elif isinstance(selected_option, int):
+        selected_id = selected_option
+    elif isinstance(selected_option, str):
+        label_to_id = {label: cid for cid, label in options}
+        selected_id = label_to_id.get(selected_option)
+
+    try:
+        selected_id = int(selected_id) if selected_id is not None else None
+    except (TypeError, ValueError):
+        selected_id = None
+
     st.session_state["carreg_edit_id"] = selected_id
     if selected_id != st.session_state.get("carreg_last_selected_id"):
         _reset_carreg_form_state()
@@ -618,7 +637,9 @@ def page_carregamentos() -> None:
 
     edit_id = st.session_state.get("carreg_edit_id")
     edit_item = svc.obter_carregamento(edit_id) if edit_id else None
-    if edit_item and edit_item.get("data") != data_iso:
+    edit_data = svc.parse_date(edit_item.get("data") or "") if edit_item else None
+    base_data = svc.parse_date(data_iso)
+    if edit_item and edit_data and base_data and edit_data != base_data:
         st.session_state["carreg_edit_id"] = None
         edit_item = None
     if edit_item:
