@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: jr-escala-web
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run streamlit_app.py --server.port $PORT --server.address 0.0.0.0
+    envVars:
+      - key: JR_ESCALA_DATABASE_URL
+        sync: false
+      - key: JR_ESCALA_UPLOAD_DIR
+        value: /var/data/uploads
+      - key: JR_ESCALA_REPORTS_DIR
+        value: /var/data/reports
+    disk:
+      name: jr-escala-data
+      mountPath: /var/data
+      sizeGB: 1
