@@ -567,23 +567,6 @@ def page_carregamentos() -> None:
                 )
 
     st.markdown("### Carregamentos do dia")
-    form_keys = [
-        "carreg_form_data",
-        "carreg_form_saida",
-        "carreg_form_placa",
-        "carreg_form_rota_num",
-        "carreg_form_rota_destino",
-        "carreg_form_obs",
-        "carreg_form_motorista",
-        "carreg_form_ajudante",
-        "carreg_form_obs_extra",
-        "carreg_form_cor",
-    ]
-
-    def _reset_carreg_form_state() -> None:
-        for key in form_keys:
-            st.session_state.pop(key, None)
-
     carregamentos_dia = sorted(registros, key=_numero_rota_ordem)
     options = ["Selecionar carregamento"]
     carreg_map = {}
@@ -604,17 +587,11 @@ def page_carregamentos() -> None:
                 break
     index = options.index(selected_label) if selected_label in options else 0
 
-    def _on_carreg_select() -> None:
-        label = st.session_state.get("carreg_select")
-        st.session_state["carreg_edit_id"] = carreg_map.get(label)
-        _reset_carreg_form_state()
-
     selected_label = st.selectbox(
         "Selecionar carregamento",
         options,
         index=index,
         key="carreg_select",
-        on_change=_on_carreg_select,
     )
     st.session_state["carreg_edit_id"] = carreg_map.get(selected_label)
     st.caption("PEND = pendente, OK = revisado")
