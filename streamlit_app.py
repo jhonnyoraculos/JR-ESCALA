@@ -343,7 +343,7 @@ def _init_state() -> None:
     )
     st.session_state.setdefault("permitir_mot_aj", False)
     st.session_state.setdefault("carreg_edit_id", None)
-    st.session_state.setdefault("carreg_last_edit_id", None)
+    st.session_state.setdefault("carreg_last_selected_id", None)
     st.session_state.setdefault("oficina_edit_id", None)
     st.session_state.setdefault("folga_edit_id", None)
     st.session_state.setdefault("escala_edit_id", None)
@@ -586,36 +586,34 @@ def page_carregamentos() -> None:
             st.session_state.pop(key, None)
 
     carregamentos_dia = sorted(registros, key=_numero_rota_ordem)
-    options = ["Selecionar carregamento"]
-    carreg_map = {}
+    options: list[tuple[int | None, str]] = [(None, "Selecionar carregamento")]
     for item in carregamentos_dia:
         rota = item.get("rota") or svc.DISPLAY_VAZIO
         placa = (item.get("placa") or "").strip() or svc.DISPLAY_VAZIO
         motorista = item.get("motorista_nome") or svc.DISPLAY_VAZIO
         status = "OK" if item.get("revisado") else "PEND"
         label = f"[{status}] {rota} | {placa} | {motorista}"
-        options.append(label)
-        carreg_map[label] = item.get("id")
+        options.append((item.get("id"), label))
     edit_id = st.session_state.get("carreg_edit_id")
-    selected_label = None
+    index = 0
     if edit_id:
-        for label, cid in carreg_map.items():
-            if cid == edit_id:
-                selected_label = label
+        for idx, option in enumerate(options):
+            if option[0] == edit_id:
+                index = idx
                 break
-    index = options.index(selected_label) if selected_label in options else 0
 
-    selected_label = st.selectbox(
+    selected_option = st.selectbox(
         "Selecionar carregamento",
         options,
         index=index,
         key="carreg_select",
+        format_func=lambda option: option[1],
     )
-    st.session_state["carreg_edit_id"] = carreg_map.get(selected_label)
-    current_edit_id = st.session_state.get("carreg_edit_id")
-    if current_edit_id != st.session_state.get("carreg_last_edit_id"):
+    selected_id = selected_option[0]
+    st.session_state["carreg_edit_id"] = selected_id
+    if selected_id != st.session_state.get("carreg_last_selected_id"):
         _reset_carreg_form_state()
-        st.session_state["carreg_last_edit_id"] = current_edit_id
+        st.session_state["carreg_last_selected_id"] = selected_id
     st.caption("PEND = pendente, OK = revisado")
 
     edit_id = st.session_state.get("carreg_edit_id")
