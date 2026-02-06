@@ -223,6 +223,10 @@ def _inject_css() -> None:
       line-height: 1.3;
       color: #0f172a;
     }
+    .jr-cell.jr-ok {
+      color: #0f7a2a;
+      font-weight: 700;
+    }
     .jr-head {
       font-size: 12px;
       text-transform: uppercase;
@@ -320,9 +324,11 @@ def _confirm_prompt(key: str, message: str) -> bool:
     return False
 
 
-def _cell(container, value: object, nowrap: bool = False) -> None:
+def _cell(container, value: object, nowrap: bool = False, extra_class: str = "") -> None:
     texto = "-" if value in (None, "") else str(value)
     classe = "jr-cell jr-nowrap" if nowrap else "jr-cell"
+    if extra_class:
+        classe = f"{classe} {extra_class}"
     container.markdown(
         f'<div class="{classe}">{html.escape(texto)}</div>',
         unsafe_allow_html=True,
@@ -531,6 +537,23 @@ def page_carregamentos() -> None:
                 )
 
     st.markdown("### Carregamentos do dia")
+    form_keys = [
+        "carreg_form_data",
+        "carreg_form_saida",
+        "carreg_form_placa",
+        "carreg_form_rota_num",
+        "carreg_form_rota_destino",
+        "carreg_form_obs",
+        "carreg_form_motorista",
+        "carreg_form_ajudante",
+        "carreg_form_obs_extra",
+        "carreg_form_cor",
+    ]
+
+    def _reset_carreg_form_state() -> None:
+        for key in form_keys:
+            st.session_state.pop(key, None)
+
     carregamentos_dia = sorted(registros, key=_numero_rota_ordem)
     options = ["Selecionar carregamento"]
     carreg_map = {}
@@ -550,11 +573,18 @@ def page_carregamentos() -> None:
                 selected_label = label
                 break
     index = options.index(selected_label) if selected_label in options else 0
+
+    def _on_carreg_select() -> None:
+        label = st.session_state.get("carreg_select")
+        st.session_state["carreg_edit_id"] = carreg_map.get(label)
+        _reset_carreg_form_state()
+
     selected_label = st.selectbox(
         "Selecionar carregamento",
         options,
         index=index,
         key="carreg_select",
+        on_change=_on_carreg_select,
     )
     st.session_state["carreg_edit_id"] = carreg_map.get(selected_label)
     st.caption("PEND = pendente, OK = revisado")
@@ -835,13 +865,14 @@ def page_carregamentos() -> None:
                 if item.get("data_saida")
                 else "-"
             )
+            row_class = "jr-ok" if item.get("revisado") else ""
             cols = st.columns(col_sizes)
-            _cell(cols[0], item.get("rota") or "-")
-            _cell(cols[1], item.get("placa") or "-", nowrap=True)
-            _cell(cols[2], item.get("motorista_nome") or "-")
-            _cell(cols[3], item.get("ajudante_nome") or "-")
-            _cell(cols[4], obs_texto)
-            _cell(cols[5], saida_valor, nowrap=True)
+            _cell(cols[0], item.get("rota") or "-", extra_class=row_class)
+            _cell(cols[1], item.get("placa") or "-", nowrap=True, extra_class=row_class)
+            _cell(cols[2], item.get("motorista_nome") or "-", extra_class=row_class)
+            _cell(cols[3], item.get("ajudante_nome") or "-", extra_class=row_class)
+            _cell(cols[4], obs_texto, extra_class=row_class)
+            _cell(cols[5], saida_valor, nowrap=True, extra_class=row_class)
             action_cols = cols[6].columns([1, 1, 1])
             item_id = item.get("id")
             if action_cols[0].button(
