@@ -586,44 +586,44 @@ def page_carregamentos() -> None:
             st.session_state.pop(key, None)
 
     carregamentos_dia = sorted(registros, key=_numero_rota_ordem)
-    options: list[tuple[int | None, str]] = [(None, "Selecionar carregamento")]
+    label_map: dict[int | None, str] = {None: "Selecionar carregamento"}
+    option_ids: list[int | None] = [None]
     for item in carregamentos_dia:
+        cid = item.get("id")
+        if cid is None:
+            continue
+        try:
+            cid = int(cid)
+        except (TypeError, ValueError):
+            continue
         rota = item.get("rota") or svc.DISPLAY_VAZIO
         placa = (item.get("placa") or "").strip() or svc.DISPLAY_VAZIO
         motorista = item.get("motorista_nome") or svc.DISPLAY_VAZIO
         status = "OK" if item.get("revisado") else "PEND"
-        label = f"[{status}] {rota} | {placa} | {motorista}"
-        options.append((item.get("id"), label))
-    edit_id = st.session_state.get("carreg_edit_id")
-    index = 0
-    if edit_id:
-        for idx, option in enumerate(options):
-            if option[0] == edit_id:
-                index = idx
-                break
+        label_map[cid] = f"[{status}] {rota} | {placa} | {motorista}"
+        option_ids.append(cid)
 
-    # Compatibilidade com estado antigo do selectbox (string em vez de tupla).
+    edit_id = st.session_state.get("carreg_edit_id")
+    try:
+        edit_id = int(edit_id) if edit_id is not None else None
+    except (TypeError, ValueError):
+        edit_id = None
+    st.session_state["carreg_edit_id"] = edit_id
+    index = option_ids.index(edit_id) if edit_id in option_ids else 0
+
+    # Limpa estado legado do selectbox (quando a key guardava texto/tupla).
     if "carreg_select" in st.session_state and not isinstance(
-        st.session_state.get("carreg_select"), (tuple, list)
+        st.session_state.get("carreg_select"), (int, type(None))
     ):
         st.session_state.pop("carreg_select", None)
 
-    selected_option = st.selectbox(
+    selected_id = st.selectbox(
         "Selecionar carregamento",
-        options,
+        option_ids,
         index=index,
         key="carreg_select",
-        format_func=lambda option: option[1],
+        format_func=lambda cid: label_map.get(cid, "Selecionar carregamento"),
     )
-    selected_id = None
-    if isinstance(selected_option, (tuple, list)) and selected_option:
-        selected_id = selected_option[0]
-    elif isinstance(selected_option, int):
-        selected_id = selected_option
-    elif isinstance(selected_option, str):
-        label_to_id = {label: cid for cid, label in options}
-        selected_id = label_to_id.get(selected_option)
-
     try:
         selected_id = int(selected_id) if selected_id is not None else None
     except (TypeError, ValueError):
