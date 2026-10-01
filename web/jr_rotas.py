@@ -294,17 +294,30 @@ def _normalize_route_label(value: Any) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _route_code_key(value: Any) -> str | None:
+    text = _clean_text(value)
+    match = ROUTE_PATTERN.search(text)
+    if match is None:
+        match = re.match(r"\s*(\d+)\b", text)
+    return f"R.{int(match.group(1))}" if match else None
+
+
 def _cleanup_legacy_loads(cursor, routes: list[dict], from_date: date) -> int:
-    official_by_weekday: dict[int, set[str]] = {weekday: set() for weekday in range(7)}
+    official_by_weekday: dict[int, dict[str, str]] = {
+        weekday: {} for weekday in range(7)
+    }
     for route in routes:
         weekday = WEEKDAY_NUMBERS.get(route.get("dia_semana"))
         if weekday is None:
+            continue
+        code = _route_code_key(route.get("rota"))
+        if code is None:
             continue
         label = _clean_text(route.get("rota"))
         destination = _clean_text(route.get("destino"))
         if destination:
             label = f"{label} - {destination}"
-        official_by_weekday[weekday].add(_normalize_route_label(label))
+        official_by_weekday[weekday][code] = label
 
     cursor.execute(
         """
@@ -321,42 +334,65 @@ def _cleanup_legacy_loads(cursor, routes: list[dict], from_date: date) -> int:
             bool(row.get(field))
             for field in ("placa", "motorista_id", "ajudante_id", "revisado")
         )
+        try:
+            load_date = _parse_date(row.get("data"))
+            code = _route_code_key(row.get("rota"))
+            official_label = official_by_weekday.get(load_date.weekday(), {}).get(
+                code or ""
+            )
+        except (TypeError, ValueError):
+            code = None
+            official_label = None
+        exact_match = bool(
+            official_label
+            and _normalize_route_label(row.get("rota"))
+            == _normalize_route_label(official_label)
+        )
         return (
             row.get("data") or "",
-            _normalize_route_label(row.get("rota")),
+            code or _normalize_route_label(row.get("rota")),
             -filled_score,
+            -int(exact_match),
             int(row.get("id") or 0),
         )
 
     kept_official: set[tuple[str, str]] = set()
     delete_ids: list[int] = []
+    rename_rows: list[tuple[str, int]] = []
     for row in sorted(rows, key=row_priority):
         try:
             load_date = _parse_date(row.get("data"))
         except (TypeError, ValueError):
             continue
-        route_label = _normalize_route_label(row.get("rota"))
-        if route_label not in official_by_weekday.get(load_date.weekday(), set()):
+        code = _route_code_key(row.get("rota"))
+        official_label = official_by_weekday.get(load_date.weekday(), {}).get(code or "")
+        if official_label is None:
             delete_ids.append(int(row["id"]))
             continue
-        key = (load_date.isoformat(), route_label)
+        normalized_official_label = _normalize_route_label(official_label)
+        key = (load_date.isoformat(), normalized_official_label)
         if key in kept_official:
             delete_ids.append(int(row["id"]))
         else:
             kept_official.add(key)
+            if _normalize_route_label(row.get("rota")) != normalized_official_label:
+                rename_rows.append((official_label, int(row["id"])))
 
-    if not delete_ids:
-        return 0
-    placeholders = ",".join("?" for _ in delete_ids)
-    values = tuple(delete_ids)
-    cursor.execute(
-        f"DELETE FROM bloqueios WHERE carregamento_id IN ({placeholders});", values
-    )
-    cursor.execute(
-        f"DELETE FROM ajustes_rotas WHERE carregamento_id IN ({placeholders});", values
-    )
-    cursor.execute(f"DELETE FROM carregamentos WHERE id IN ({placeholders});", values)
-    return len(delete_ids)
+    if rename_rows:
+        cursor.executemany(
+            "UPDATE carregamentos SET rota = ? WHERE id = ?;", rename_rows
+        )
+    if delete_ids:
+        placeholders = ",".join("?" for _ in delete_ids)
+        values = tuple(delete_ids)
+        cursor.execute(
+            f"DELETE FROM bloqueios WHERE carregamento_id IN ({placeholders});", values
+        )
+        cursor.execute(
+            f"DELETE FROM ajustes_rotas WHERE carregamento_id IN ({placeholders});", values
+        )
+        cursor.execute(f"DELETE FROM carregamentos WHERE id IN ({placeholders});", values)
+    return len(rename_rows) + len(delete_ids)
 
 
 def _apply_snapshot(routes: list[dict]) -> tuple[int, int, int, int]:

@@ -212,6 +212,44 @@ class SnapshotTests(unittest.TestCase):
             ],
         )
 
+    def test_snapshot_renames_changed_destination_without_losing_assignment(self):
+        with db.get_connection() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                INSERT INTO carregamentos
+                    (data, data_saida, rota, placa, observacao, revisado)
+                VALUES (?, ?, ?, ?, '0', 1);
+                """,
+                (
+                    "2026-10-01",
+                    "2026-10-02",
+                    "R.600 - SANTA LUZIA",
+                    "ABC-1D23",
+                ),
+            )
+            connection.commit()
+        connection.close()
+
+        official = self.route("R.600", "Pedro Leopoldo", "3:R.600")
+        official["dia_semana"] = "quinta"
+        official["origem_hash"] = jr_rotas._route_hash(official)
+        self.assertEqual(jr_rotas._apply_snapshot([official]), (1, 0, 0, 1))
+
+        with db.get_connection(dict_rows=True) as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT rota, placa, revisado FROM carregamentos;")
+            row = dict(cursor.fetchone())
+        connection.close()
+        self.assertEqual(
+            row,
+            {
+                "rota": "R.600 - Pedro Leopoldo",
+                "placa": "ABC-1D23",
+                "revisado": 1,
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
