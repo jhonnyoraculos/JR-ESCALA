@@ -31,6 +31,16 @@ class TripDurationTests(unittest.TestCase):
             "Observação antes das rotas · COLETA ESPECIAL · Retorno após as 16h",
         )
 
+    def test_uses_destination_specific_to_each_weekday_from_matrix(self):
+        destinations = jr_rotas._matrix_route_destinations(
+            {
+                "0": ["SANTA LUZIA (R.600)"],
+                "3": ["PEDRO LEOPOLDO (R.600)"],
+            }
+        )
+        self.assertEqual(destinations[(0, "R.600")], "SANTA LUZIA")
+        self.assertEqual(destinations[(3, "R.600")], "PEDRO LEOPOLDO")
+
     def test_holiday_on_last_day_of_trip_is_reported(self):
         routes = [
             {

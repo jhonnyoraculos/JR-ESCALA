@@ -33,6 +33,7 @@ WEEKDAYS = {
     6: "domingo",
 }
 WEEKDAY_NUMBERS = {value: key for key, value in WEEKDAYS.items()}
+ROUTE_PATTERN = re.compile(r"\(?\s*R\s*\.\s*(\d+)\s*\)?", re.IGNORECASE)
 
 
 class JRRotasError(RuntimeError):
@@ -182,7 +183,6 @@ def _matrix_day_notes(value: Any) -> dict[int, str]:
         return {}
 
     notes_by_day: dict[int, str] = {}
-    route_pattern = re.compile(r"\(?\s*R\s*\.\s*\d+\s*\)?", re.IGNORECASE)
     for weekday in range(7):
         values = value.get(str(weekday), value.get(weekday, []))
         if not isinstance(values, list):
@@ -193,7 +193,7 @@ def _matrix_day_notes(value: Any) -> dict[int, str]:
             text = _clean_text(raw_value).lstrip("!* ").strip()
             if not text:
                 continue
-            if route_pattern.search(text):
+            if ROUTE_PATTERN.search(text):
                 current_route = True
                 continue
             normalized = text.casefold()
@@ -211,6 +211,32 @@ def _matrix_day_notes(value: Any) -> dict[int, str]:
         if notes:
             notes_by_day[weekday] = " · ".join(dict.fromkeys(notes))
     return notes_by_day
+
+
+def _matrix_route_destinations(value: Any) -> dict[tuple[int, str], str]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+    if not isinstance(value, dict):
+        return {}
+
+    destinations: dict[tuple[int, str], str] = {}
+    for weekday in range(7):
+        values = value.get(str(weekday), value.get(weekday, []))
+        if not isinstance(values, list):
+            continue
+        for raw_value in values:
+            text = _clean_text(raw_value).lstrip("!* ").strip()
+            match = ROUTE_PATTERN.search(text)
+            if not match:
+                continue
+            code = f"R.{int(match.group(1))}"
+            destination = ROUTE_PATTERN.sub("", text).strip(" -–—()\t")
+            if destination:
+                destinations[(weekday, code)] = destination
+    return destinations
 
 
 def _fetch_source_routes(url: str) -> list[dict]:
@@ -254,7 +280,9 @@ def _fetch_source_routes(url: str) -> list[dict]:
             "O esquema de rotas do banco de origem não está disponível."
         ) from exc
 
-    notes_by_day = _matrix_day_notes(setting.get("value") if setting else None)
+    matrix_value = setting.get("value") if setting else None
+    notes_by_day = _matrix_day_notes(matrix_value)
+    matrix_destinations = _matrix_route_destinations(matrix_value)
     routes: list[dict] = []
     seen: set[str] = set()
     for row in rows:
@@ -270,7 +298,9 @@ def _fetch_source_routes(url: str) -> list[dict]:
             "origem_id": source_id,
             "dia_semana": WEEKDAYS[weekday],
             "rota": code,
-            "destino": _clean_text(row["destination"]),
+            "destino": matrix_destinations.get(
+                (weekday, code.upper()), _clean_text(row["destination"])
+            ),
             "observacao": notes_by_day.get(weekday, ""),
             "ordem": int(row.get("position") or 0),
             "cidades": _normalize_cities(row.get("cities")),
