@@ -514,6 +514,7 @@ def _clear_cached_data() -> None:
 @st.cache_resource(show_spinner=False)
 def _init_database_once() -> bool:
     init_db()
+    svc.sincronizar_colaboradores_20261001()
     return True
 
 

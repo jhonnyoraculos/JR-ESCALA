@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Iterable
 import os
 import re
+import unicodedata
 
 from .db import DBError, UPLOAD_DIR, get_connection, insert_and_get_id
 
@@ -434,6 +435,167 @@ def verificar_disponibilidade(data_iso: str, ignorar: dict[str, int] | None = No
 
 
 # Colaboradores
+
+
+COLABORADORES_20261001 = (
+    ("ALDEMIR LUIZ DA SILVA", "Motorista"),
+    ("ANDRE LUIZ", "Motorista"),
+    ("ARMED JUNIOR", "Motorista"),
+    ("CELSO ANTONIO CAETANO", "Motorista"),
+    ("CRISTIANO CLEMENTINO OLIVEIRA", "Motorista"),
+    ("DOUGLAS ALBERTINO GREGORIO", "Motorista"),
+    ("DOUGLAS RODRIGUES DE OLIVEIRA", "Motorista"),
+    ("FREDER HENRIQUE MOREIRA DE CARVALHO", "Motorista"),
+    ("GABRIEL DE SOUSA", "Motorista"),
+    ("GABRIEL FELIPE DE FARIA OLIIVEIRA", "Motorista"),
+    ("GERALDO FERNANDO DA SILVA", "Motorista"),
+    ("IAGO RAIMUNDO DIAS", "Motorista"),
+    ("JOSE ARILDO DOMINGOS", "Motorista"),
+    ("KAIO FERNANDO", "Motorista"),
+    ("LUCAS APARECIDO ROQUE", "Motorista"),
+    ("MARCOS PAULO PEREIRA RAMOS", "Motorista"),
+    ("MATEUS SEVERINO DE SOUZA", "Motorista"),
+    ("PEDRO AMARAL E SILVA", "Motorista"),
+    ("RAIMUNDO ADRIANO DO ROSARIO REIS", "Motorista"),
+    ("REGINALDO MOREIRA LÃO", "Motorista"),
+    ("RICARDO DE OLIVEIRA SOUSA", "Motorista"),
+    ("RONALDO PEREIRA CORDEIRO", "Motorista"),
+    ("SIDNEY RAIMUNDO DA SILVA", "Motorista"),
+    ("WESLEY LUCIO", "Motorista"),
+    ("ROBERT JHONATHAN SILVA", "Motorista"),
+    ("HIPOCRATES HERSCHEL PINTO", "Motorista"),
+    ("DIEGO GERALDO BAZILIO", "Motorista"),
+    ("ADEMILSON RODRIGUES DA SILVA", "Ajudante"),
+    ("AILTON SILVA DE SOUSA", "Ajudante"),
+    ("ALONSO FONSECA DE SOUSA FILHO", "Ajudante"),
+    ("BRUNO HENRIQUE MENDES", "Ajudante"),
+    ("CAIQUE LACERDA DOS SANTOS", "Ajudante"),
+    ("CHARLES COSTA SANTOS", "Ajudante"),
+    ("DEVIS PENA DE OLIVEIRA", "Ajudante"),
+    ("EDER SILVA", "Ajudante"),
+    ("EDUARDO ANDRADE SILVA", "Ajudante"),
+    ("EDUARDO FRANKLIN", "Ajudante"),
+    ("ELDERSON JOSE GOMES", "Ajudante"),
+    ("EMERSON FELIPE MACHADO", "Ajudante"),
+    ("FERNANDO EUSTAQUIO FERREIRA", "Ajudante"),
+    ("FERNANDO GOMES DE MOURA", "Ajudante"),
+    ("GABRIEL HENRIQUE DE SOUZA CARVALHO", "Ajudante"),
+    ("GUILHERME ALVES DIAS", "Ajudante"),
+    ("LEANDRO COELHO PIMENTEL", "Ajudante"),
+    ("MARCIO ANTONIO GARCIA", "Ajudante"),
+    ("MARCO VINICIO ALMEIDA VEIGA", "Ajudante"),
+    ("MARCOS HEITOR DA SILVA", "Ajudante"),
+    ("ORMIR GONÇALVES BORGES", "Ajudante"),
+    ("ROGERIO DAS NEVES MEDEIROS SANTOS", "Ajudante"),
+    ("TAUAN TEODORO GONÇALVES", "Ajudante"),
+    ("TIAGO PEREIRA DOS SANTOS", "Ajudante"),
+    ("WEVERSON FERREIRA DOS SANTOS", "Ajudante"),
+)
+
+
+def _normalizar_nome_colaborador(nome: str | None) -> str:
+    texto = unicodedata.normalize("NFKD", nome or "")
+    texto = "".join(caractere for caractere in texto if not unicodedata.combining(caractere))
+    return " ".join(texto.upper().split())
+
+
+def _excluir_colaborador_com_cursor(cur, colaborador_id: int) -> None:
+    cur.execute("DELETE FROM folgas WHERE colaborador_id = ?;", (colaborador_id,))
+    cur.execute("DELETE FROM ferias WHERE colaborador_id = ?;", (colaborador_id,))
+    cur.execute("DELETE FROM bloqueios WHERE colaborador_id = ?;", (colaborador_id,))
+    cur.execute("UPDATE carregamentos SET motorista_id = NULL WHERE motorista_id = ?;", (colaborador_id,))
+    cur.execute("UPDATE carregamentos SET ajudante_id = NULL WHERE ajudante_id = ?;", (colaborador_id,))
+    cur.execute("UPDATE escala_cd SET motorista_id = NULL WHERE motorista_id = ?;", (colaborador_id,))
+    cur.execute("UPDATE escala_cd SET ajudante_id = NULL WHERE ajudante_id = ?;", (colaborador_id,))
+    cur.execute("UPDATE oficinas SET motorista_id = NULL WHERE motorista_id = ?;", (colaborador_id,))
+    cur.execute("DELETE FROM colaboradores WHERE id = ?;", (colaborador_id,))
+
+
+def _mesclar_colaborador_com_cursor(cur, origem_id: int, destino_id: int) -> None:
+    cur.execute(
+        """
+        DELETE FROM folgas
+        WHERE colaborador_id = ?
+          AND EXISTS (
+              SELECT 1 FROM folgas existente
+              WHERE existente.colaborador_id = ?
+                AND existente.data = folgas.data
+          );
+        """,
+        (origem_id, destino_id),
+    )
+    cur.execute("UPDATE folgas SET colaborador_id = ? WHERE colaborador_id = ?;", (destino_id, origem_id))
+    cur.execute("UPDATE ferias SET colaborador_id = ? WHERE colaborador_id = ?;", (destino_id, origem_id))
+    cur.execute("UPDATE bloqueios SET colaborador_id = ? WHERE colaborador_id = ?;", (destino_id, origem_id))
+    cur.execute("UPDATE carregamentos SET motorista_id = ? WHERE motorista_id = ?;", (destino_id, origem_id))
+    cur.execute("UPDATE carregamentos SET ajudante_id = ? WHERE ajudante_id = ?;", (destino_id, origem_id))
+    cur.execute("UPDATE escala_cd SET motorista_id = ? WHERE motorista_id = ?;", (destino_id, origem_id))
+    cur.execute("UPDATE escala_cd SET ajudante_id = ? WHERE ajudante_id = ?;", (destino_id, origem_id))
+    cur.execute("UPDATE oficinas SET motorista_id = ? WHERE motorista_id = ?;", (destino_id, origem_id))
+    cur.execute("DELETE FROM colaboradores WHERE id = ?;", (origem_id,))
+
+
+def sincronizar_colaboradores_20261001() -> bool:
+    """Aplica uma vez o quadro informado, preservando todos os fretados."""
+    migration_id = "colaboradores_2026-10-01_v1"
+    with get_connection(dict_rows=True) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_migrations (
+                id TEXT PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            );
+            """
+        )
+        cur.execute("SELECT id FROM app_migrations WHERE id = ?;", (migration_id,))
+        if cur.fetchone():
+            return False
+
+        cur.execute("SELECT id, nome, ativo FROM colaboradores ORDER BY id;")
+        existentes = [dict(row) for row in cur.fetchall()]
+        por_nome: dict[str, list[dict]] = {}
+        for registro in existentes:
+            por_nome.setdefault(_normalizar_nome_colaborador(registro.get("nome")), []).append(registro)
+
+        ids_mantidos: set[int] = set()
+        for nome, funcao in COLABORADORES_20261001:
+            correspondentes = por_nome.get(_normalizar_nome_colaborador(nome), [])
+            if correspondentes:
+                principal = next(
+                    (item for item in correspondentes if item.get("ativo")), correspondentes[0]
+                )
+                principal_id = int(principal["id"])
+                cur.execute(
+                    "UPDATE colaboradores SET nome = ?, funcao = ?, ativo = 1 WHERE id = ?;",
+                    (nome, funcao, principal_id),
+                )
+                for duplicado in correspondentes:
+                    duplicado_id = int(duplicado["id"])
+                    if duplicado_id != principal_id:
+                        _mesclar_colaborador_com_cursor(cur, duplicado_id, principal_id)
+                ids_mantidos.add(principal_id)
+            else:
+                novo_id = insert_and_get_id(
+                    cur,
+                    "INSERT INTO colaboradores (nome, funcao, observacao, foto, ativo) VALUES (?, ?, '', '', 1);",
+                    (nome, funcao),
+                )
+                if novo_id is not None:
+                    ids_mantidos.add(int(novo_id))
+
+        for registro in existentes:
+            colaborador_id = int(registro["id"])
+            nome_normalizado = _normalizar_nome_colaborador(registro.get("nome"))
+            if colaborador_id not in ids_mantidos and "FRETADO" not in nome_normalizado:
+                _excluir_colaborador_com_cursor(cur, colaborador_id)
+
+        cur.execute(
+            "INSERT INTO app_migrations (id, applied_at) VALUES (?, ?);",
+            (migration_id, datetime.now().isoformat(timespec="seconds")),
+        )
+        conn.commit()
+        return True
 
 
 def add_colaborador(nome: str, funcao: str, observacao: str = "", foto: str | None = None) -> int:

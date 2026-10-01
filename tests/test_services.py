@@ -90,6 +90,54 @@ class ServiceCrudTests(unittest.TestCase):
             )
             self.assertEqual(cursor.fetchone()[0], 0)
 
+    def test_sync_requested_collaborators_preserves_fretados_and_is_idempotent(self):
+        services.atualizar_colaborador(
+            self.motorista,
+            "aldemir luiz da silva",
+            "Ajudante",
+            "Cadastro existente",
+            None,
+            True,
+        )
+        duplicate_id = services.add_colaborador("ALDÉMIR  LUIZ DA SILVA", "Ajudante")
+        services.desativar_colaborador(duplicate_id)
+        antigo_id = services.add_colaborador("COLABORADOR ANTIGO", "Motorista")
+        fretado_id = services.add_colaborador("FRETADO (TESTE)", "Motorista")
+        carregamento_id = services.salvar_carregamento(
+            "2026-10-01",
+            "R.998 - TESTE MIGRAÇÃO",
+            None,
+            duplicate_id,
+            antigo_id,
+            "0",
+        )
+
+        self.assertTrue(services.sincronizar_colaboradores_20261001())
+        self.assertFalse(services.sincronizar_colaboradores_20261001())
+
+        colaboradores = services.listar_colaboradores()
+        self.assertEqual(
+            len(colaboradores),
+            len(services.COLABORADORES_20261001) + 1,
+        )
+        self.assertEqual(
+            len({item["nome"] for item in colaboradores}),
+            len(colaboradores),
+        )
+        aldemir = next(
+            item for item in colaboradores if item["nome"] == "ALDEMIR LUIZ DA SILVA"
+        )
+        self.assertEqual(aldemir["id"], self.motorista)
+        self.assertEqual(aldemir["funcao"], "Motorista")
+        self.assertEqual(aldemir["ativo"], 1)
+        self.assertIsNone(services.obter_colaborador_por_id(duplicate_id))
+        self.assertIsNone(services.obter_colaborador_por_id(antigo_id))
+        self.assertIsNotNone(services.obter_colaborador_por_id(fretado_id))
+
+        carregamento = services.obter_carregamento(carregamento_id)
+        self.assertEqual(carregamento["motorista_id"], self.motorista)
+        self.assertIsNone(carregamento["ajudante_id"])
+
     def test_oficina_edit_persists_changed_date_and_delete(self):
         oficina_id = services.salvar_oficina(
             "2026-10-01",
