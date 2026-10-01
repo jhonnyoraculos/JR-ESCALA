@@ -708,22 +708,6 @@ def page_carregamentos() -> None:
                 _set_flash("error", f"Erro ao limpar alterações: {exc}")
             _clear_cached_data()
             st.rerun()
-    elif st.session_state.get("carreg_confirm_excluir") is not None:
-        excluir_id = st.session_state.get("carreg_confirm_excluir")
-        if _confirm_prompt("carreg_confirm_excluir", f"Excluir carregamento #{excluir_id}?"):
-            try:
-                registro = _cache_obter_carregamento(excluir_id)
-                if registro:
-                    svc.registrar_rota_suprimida(registro.get("data"), registro.get("rota"))
-                svc.remover_carregamento_completo(excluir_id)
-                _set_flash("success", "Carregamento excluído.")
-            except Exception as exc:
-                _set_flash("error", f"Erro ao excluir: {exc}")
-            st.session_state["carreg_pending_edit_id"] = None
-            st.session_state["carreg_pending_reset_form"] = True
-            _clear_cached_data()
-            st.rerun()
-
     action_cols = st.columns([2, 2, 2])
     with action_cols[0]:
         st.button(
@@ -1135,22 +1119,53 @@ def page_carregamentos() -> None:
             _cell(cols[3], item.get("ajudante_nome") or "-", extra_class=row_class)
             _cell(cols[4], obs_texto, extra_class=row_class)
             _cell(cols[5], saida_valor, nowrap=True, extra_class=row_class)
-            action_cols = cols[6].columns(2)
             item_id = item.get("id")
-            action_cols[0].button(
-                "Editar",
-                key=f"carreg_row_edit_{item_id}",
-                use_container_width=True,
-                on_click=_set_carreg_edit_target,
-                args=(item_id,),
-            )
-            action_cols[1].button(
-                "Excluir",
-                key=f"carreg_row_del_{item_id}",
-                use_container_width=True,
-                on_click=_request_confirm,
-                args=("carreg_confirm_excluir", item_id),
-            )
+            if st.session_state.get("carreg_confirm_excluir") == item_id:
+                cols[6].caption("Excluir este registro?")
+                confirm_cols = cols[6].columns(2)
+                if confirm_cols[0].button(
+                    "Confirmar",
+                    key=f"carreg_row_del_yes_{item_id}",
+                    use_container_width=True,
+                ):
+                    try:
+                        registro = _cache_obter_carregamento(item_id)
+                        if registro:
+                            svc.registrar_rota_suprimida(
+                                registro.get("data"), registro.get("rota")
+                            )
+                        svc.remover_carregamento_completo(item_id)
+                        _set_flash("success", "Carregamento excluído.")
+                    except Exception as exc:
+                        _set_flash("error", f"Erro ao excluir: {exc}")
+                    st.session_state.pop("carreg_confirm_excluir", None)
+                    st.session_state["carreg_pending_edit_id"] = None
+                    st.session_state["carreg_pending_reset_form"] = True
+                    _clear_cached_data()
+                    st.rerun()
+                if confirm_cols[1].button(
+                    "Cancelar",
+                    key=f"carreg_row_del_no_{item_id}",
+                    use_container_width=True,
+                ):
+                    st.session_state.pop("carreg_confirm_excluir", None)
+                    st.rerun()
+            else:
+                action_cols = cols[6].columns(2)
+                action_cols[0].button(
+                    "Editar",
+                    key=f"carreg_row_edit_{item_id}",
+                    use_container_width=True,
+                    on_click=_set_carreg_edit_target,
+                    args=(item_id,),
+                )
+                action_cols[1].button(
+                    "Excluir",
+                    key=f"carreg_row_del_{item_id}",
+                    use_container_width=True,
+                    on_click=_request_confirm,
+                    args=("carreg_confirm_excluir", item_id),
+                )
     else:
         st.info("Nenhum carregamento cadastrado.")
 
