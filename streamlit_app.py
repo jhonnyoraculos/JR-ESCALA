@@ -307,7 +307,11 @@ def _numero_rota_ordem(item: dict) -> tuple[int, int | str]:
 
 def _request_confirm(key: str, payload: object = True) -> None:
     st.session_state[key] = payload
-    st.rerun()
+
+
+def _set_carreg_edit_target(item_id: int | None) -> None:
+    st.session_state["carreg_pending_edit_id"] = item_id
+    st.session_state["carreg_pending_reset_form"] = True
 
 
 _EDIT_FORM_PREFIXES = {
@@ -722,11 +726,19 @@ def page_carregamentos() -> None:
 
     action_cols = st.columns([2, 2, 2])
     with action_cols[0]:
-        if st.button("Recarregar rotas semanais", key="carreg_recarregar"):
-            _request_confirm("carreg_confirm_recarregar")
+        st.button(
+            "Recarregar rotas semanais",
+            key="carreg_recarregar",
+            on_click=_request_confirm,
+            args=("carreg_confirm_recarregar",),
+        )
     with action_cols[1]:
-        if st.button("Limpar alterações", key="carreg_limpar"):
-            _request_confirm("carreg_confirm_limpar")
+        st.button(
+            "Limpar alterações",
+            key="carreg_limpar",
+            on_click=_request_confirm,
+            args=("carreg_confirm_limpar",),
+        )
     with action_cols[2]:
         if st.button("Gerar relatório", key="carreg_relatorio"):
             from web.reports import _linha_relatorio_carregamento, desenhar_relatorio_carregamentos
@@ -1079,10 +1091,12 @@ def page_carregamentos() -> None:
         st.rerun()
 
     if edit_item:
-        if st.button("Cancelar edição", key="carreg_cancelar"):
-            st.session_state["carreg_pending_edit_id"] = None
-            st.session_state["carreg_pending_reset_form"] = True
-            st.rerun()
+        st.button(
+            "Cancelar edição",
+            key="carreg_cancelar",
+            on_click=_set_carreg_edit_target,
+            args=(None,),
+        )
 
     st.markdown("### Lista do dia")
     if registros:
@@ -1123,16 +1137,20 @@ def page_carregamentos() -> None:
             _cell(cols[5], saida_valor, nowrap=True, extra_class=row_class)
             action_cols = cols[6].columns(2)
             item_id = item.get("id")
-            if action_cols[0].button(
-                "Editar", key=f"carreg_row_edit_{item_id}", use_container_width=True
-            ):
-                st.session_state["carreg_pending_edit_id"] = item_id
-                st.session_state["carreg_pending_reset_form"] = True
-                st.rerun()
-            if action_cols[1].button(
-                "Excluir", key=f"carreg_row_del_{item_id}", use_container_width=True
-            ):
-                _request_confirm("carreg_confirm_excluir", item_id)
+            action_cols[0].button(
+                "Editar",
+                key=f"carreg_row_edit_{item_id}",
+                use_container_width=True,
+                on_click=_set_carreg_edit_target,
+                args=(item_id,),
+            )
+            action_cols[1].button(
+                "Excluir",
+                key=f"carreg_row_del_{item_id}",
+                use_container_width=True,
+                on_click=_request_confirm,
+                args=("carreg_confirm_excluir", item_id),
+            )
     else:
         st.info("Nenhum carregamento cadastrado.")
 
@@ -1335,8 +1353,13 @@ def page_oficinas() -> None:
         st.rerun()
 
     if edit_item:
-        if st.button("Cancelar edição", key="oficina_cancelar"):
-            _set_edit_target("oficina_edit_id", None)
+        st.button(
+            "Cancelar edição",
+            key="oficina_cancelar",
+            on_click=_set_edit_target,
+            args=("oficina_edit_id", None),
+            kwargs={"rerun": False},
+        )
 
     if registros:
         col_sizes = [1.2, 2.2, 2.8, 1.4, 2.4]
@@ -1354,14 +1377,15 @@ def page_oficinas() -> None:
             _cell(cols[3], item.get("data_saida") or "-", nowrap=True)
             action_cols = cols[4].columns(2)
             item_id = item.get("id")
-            if action_cols[0].button(
-                "Editar", key=f"oficina_row_edit_{item_id}", use_container_width=True
-            ):
-                _set_edit_target("oficina_edit_id", item_id)
-            if action_cols[1].button(
-                "Excluir", key=f"oficina_row_del_{item_id}", use_container_width=True
-            ):
-                _request_confirm("oficina_confirm_excluir", item_id)
+            action_cols[0].button(
+                "Editar", key=f"oficina_row_edit_{item_id}", use_container_width=True,
+                on_click=_set_edit_target, args=("oficina_edit_id", item_id),
+                kwargs={"rerun": False},
+            )
+            action_cols[1].button(
+                "Excluir", key=f"oficina_row_del_{item_id}", use_container_width=True,
+                on_click=_request_confirm, args=("oficina_confirm_excluir", item_id),
+            )
     else:
         st.info("Nenhuma oficina cadastrada.")
 
@@ -1496,8 +1520,10 @@ def page_folgas() -> None:
         st.rerun()
 
     if edit_item:
-        if st.button("Cancelar edição", key="folga_cancelar"):
-            _set_edit_target("folga_edit_id", None)
+        st.button(
+            "Cancelar edição", key="folga_cancelar", on_click=_set_edit_target,
+            args=("folga_edit_id", None), kwargs={"rerun": False},
+        )
 
     if registros:
         col_sizes = [2.4, 1.2, 2.2, 2.2]
@@ -1518,14 +1544,15 @@ def page_folgas() -> None:
             _cell(cols[2], periodo or "-", nowrap=True)
             action_cols = cols[3].columns(2)
             item_id = item.get("folga_id")
-            if action_cols[0].button(
-                "Editar", key=f"folga_row_edit_{item_id}", use_container_width=True
-            ):
-                _set_edit_target("folga_edit_id", item_id)
-            if action_cols[1].button(
-                "Excluir", key=f"folga_row_del_{item_id}", use_container_width=True
-            ):
-                _request_confirm("folga_confirm_excluir", item_id)
+            action_cols[0].button(
+                "Editar", key=f"folga_row_edit_{item_id}", use_container_width=True,
+                on_click=_set_edit_target, args=("folga_edit_id", item_id),
+                kwargs={"rerun": False},
+            )
+            action_cols[1].button(
+                "Excluir", key=f"folga_row_del_{item_id}", use_container_width=True,
+                on_click=_request_confirm, args=("folga_confirm_excluir", item_id),
+            )
     else:
         st.info("Nenhuma folga cadastrada.")
 
@@ -1698,8 +1725,10 @@ def page_escala_cd() -> None:
         st.rerun()
 
     if edit_item:
-        if st.button("Cancelar edição", key="escala_cancelar"):
-            _set_edit_target("escala_edit_id", None)
+        st.button(
+            "Cancelar edição", key="escala_cancelar", on_click=_set_edit_target,
+            args=("escala_edit_id", None), kwargs={"rerun": False},
+        )
 
     if registros:
         col_sizes = [2.2, 2.2, 2.8, 2]
@@ -1715,14 +1744,15 @@ def page_escala_cd() -> None:
             _cell(cols[2], item.get("observacao") or "-")
             action_cols = cols[3].columns(2)
             item_id = item.get("id")
-            if action_cols[0].button(
-                "Editar", key=f"escala_row_edit_{item_id}", use_container_width=True
-            ):
-                _set_edit_target("escala_edit_id", item_id)
-            if action_cols[1].button(
-                "Excluir", key=f"escala_row_del_{item_id}", use_container_width=True
-            ):
-                _request_confirm("escala_confirm_excluir", item_id)
+            action_cols[0].button(
+                "Editar", key=f"escala_row_edit_{item_id}", use_container_width=True,
+                on_click=_set_edit_target, args=("escala_edit_id", item_id),
+                kwargs={"rerun": False},
+            )
+            action_cols[1].button(
+                "Excluir", key=f"escala_row_del_{item_id}", use_container_width=True,
+                on_click=_request_confirm, args=("escala_confirm_excluir", item_id),
+            )
     else:
         st.info("Nenhuma escala cadastrada.")
 
@@ -1910,8 +1940,10 @@ def page_rotas_semanais() -> None:
             st.rerun()
 
     if edit_item:
-        if st.button("Cancelar edição", key="rotas_cancelar"):
-            _set_edit_target("rota_edit_id", None)
+        st.button(
+            "Cancelar edição", key="rotas_cancelar", on_click=_set_edit_target,
+            args=("rota_edit_id", None), kwargs={"rerun": False},
+        )
 
     if registros:
         col_sizes = [1.2, 2.2, 2.6, 2]
@@ -1927,20 +1959,23 @@ def page_rotas_semanais() -> None:
             _cell(cols[2], item.get("observacao") or "-")
             action_cols = cols[3].columns(2)
             item_id = item.get("id")
-            if action_cols[0].button(
+            action_cols[0].button(
                 "Editar",
                 key=f"rotas_row_edit_{item_id}",
                 use_container_width=True,
                 disabled=item.get("origem") == "jr_rotas",
-            ):
-                _set_edit_target("rota_edit_id", item_id)
-            if action_cols[1].button(
+                on_click=_set_edit_target,
+                args=("rota_edit_id", item_id),
+                kwargs={"rerun": False},
+            )
+            action_cols[1].button(
                 "Excluir",
                 key=f"rotas_row_del_{item_id}",
                 use_container_width=True,
                 disabled=item.get("origem") == "jr_rotas",
-            ):
-                _request_confirm("rota_confirm_excluir", item_id)
+                on_click=_request_confirm,
+                args=("rota_confirm_excluir", item_id),
+            )
     else:
         st.info("Nenhuma rota cadastrada.")
 
@@ -2016,8 +2051,10 @@ def page_caminhoes() -> None:
             st.rerun()
 
     if edit_item:
-        if st.button("Cancelar edição", key="caminhao_cancelar"):
-            _set_edit_target("caminhao_edit_id", None)
+        st.button(
+            "Cancelar edição", key="caminhao_cancelar", on_click=_set_edit_target,
+            args=("caminhao_edit_id", None), kwargs={"rerun": False},
+        )
 
     if registros:
         col_sizes = [1.2, 2.0, 2.4, 1.2, 2.2]
@@ -2035,14 +2072,15 @@ def page_caminhoes() -> None:
             _cell(cols[3], "Ativo" if item.get("ativo") else "Inativo", nowrap=True)
             action_cols = cols[4].columns(2)
             item_id = item.get("id")
-            if action_cols[0].button(
-                "Editar", key=f"caminhao_row_edit_{item_id}", use_container_width=True
-            ):
-                _set_edit_target("caminhao_edit_id", item_id)
-            if action_cols[1].button(
-                "Excluir", key=f"caminhao_row_del_{item_id}", use_container_width=True
-            ):
-                _request_confirm("caminhao_confirm_excluir", item_id)
+            action_cols[0].button(
+                "Editar", key=f"caminhao_row_edit_{item_id}", use_container_width=True,
+                on_click=_set_edit_target, args=("caminhao_edit_id", item_id),
+                kwargs={"rerun": False},
+            )
+            action_cols[1].button(
+                "Excluir", key=f"caminhao_row_del_{item_id}", use_container_width=True,
+                on_click=_request_confirm, args=("caminhao_confirm_excluir", item_id),
+            )
     else:
         st.info("Nenhum caminhão cadastrado.")
 
@@ -2156,8 +2194,10 @@ def page_ferias() -> None:
             st.rerun()
 
     if edit_item:
-        if st.button("Cancelar edição", key="ferias_cancelar"):
-            _set_edit_target("ferias_edit_id", None)
+        st.button(
+            "Cancelar edição", key="ferias_cancelar", on_click=_set_edit_target,
+            args=("ferias_edit_id", None), kwargs={"rerun": False},
+        )
 
     if registros:
         col_sizes = [2.2, 1.2, 1.2, 2.2, 1.2, 2]
@@ -2177,14 +2217,15 @@ def page_ferias() -> None:
             _cell(cols[4], item.get("status") or "-")
             action_cols = cols[5].columns(2)
             item_id = item.get("id")
-            if action_cols[0].button(
-                "Editar", key=f"ferias_row_edit_{item_id}", use_container_width=True
-            ):
-                _set_edit_target("ferias_edit_id", item_id)
-            if action_cols[1].button(
-                "Excluir", key=f"ferias_row_del_{item_id}", use_container_width=True
-            ):
-                _request_confirm("ferias_confirm_excluir", item_id)
+            action_cols[0].button(
+                "Editar", key=f"ferias_row_edit_{item_id}", use_container_width=True,
+                on_click=_set_edit_target, args=("ferias_edit_id", item_id),
+                kwargs={"rerun": False},
+            )
+            action_cols[1].button(
+                "Excluir", key=f"ferias_row_del_{item_id}", use_container_width=True,
+                on_click=_request_confirm, args=("ferias_confirm_excluir", item_id),
+            )
     else:
         st.info("Nenhum período de férias cadastrado.")
 
@@ -2242,7 +2283,6 @@ def page_colaboradores() -> None:
                 st.session_state["colab_edit_id"] = item_id
                 st.session_state.pop("colab_confirm_desativar", None)
                 st.session_state.pop("colab_confirm_excluir", None)
-                st.rerun()
             if action_cols[1].button(
                 "Desativar",
                 key=f"colab_row_desativar_{item_id}",
@@ -2636,10 +2676,18 @@ def page_log() -> None:
 
             action_cols = st.columns(2)
             if item.get("status") != "Finalizado":
-                if action_cols[0].button("Liberar agora", key=f"log_liberar_{item['id']}"):
-                    _request_confirm("log_confirm_liberar", item["id"])
-            if action_cols[1].button("Excluir carregamento", key=f"log_excluir_{item['id']}"):
-                _request_confirm("log_confirm_excluir", item["id"])
+                action_cols[0].button(
+                    "Liberar agora",
+                    key=f"log_liberar_{item['id']}",
+                    on_click=_request_confirm,
+                    args=("log_confirm_liberar", item["id"]),
+                )
+            action_cols[1].button(
+                "Excluir carregamento",
+                key=f"log_excluir_{item['id']}",
+                on_click=_request_confirm,
+                args=("log_confirm_excluir", item["id"]),
+            )
         st.markdown("---")
 
 
