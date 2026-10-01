@@ -213,39 +213,13 @@ def _matrix_day_notes(value: Any) -> dict[int, str]:
     return notes_by_day
 
 
-def _matrix_route_destinations(value: Any) -> dict[tuple[int, str], str]:
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            return {}
-    if not isinstance(value, dict):
-        return {}
-
-    destinations: dict[tuple[int, str], str] = {}
-    for weekday in range(7):
-        values = value.get(str(weekday), value.get(weekday, []))
-        if not isinstance(values, list):
-            continue
-        for raw_value in values:
-            text = _clean_text(raw_value).lstrip("!* ").strip()
-            match = ROUTE_PATTERN.search(text)
-            if not match:
-                continue
-            code = f"R.{int(match.group(1))}"
-            destination = ROUTE_PATTERN.sub("", text).strip(" -–—()\t")
-            if destination:
-                destinations[(weekday, code)] = destination
-    return destinations
-
-
 def _fetch_source_routes(url: str) -> list[dict]:
     query = """
         SELECT
-            p.weekday,
+            t.weekday,
             r.code,
-            COALESCE(NULLIF(BTRIM(p.display_name), ''), r.name) AS destination,
-            p.position,
+            r.name AS destination,
+            t.position,
             COALESCE(
                 JSON_AGG(
                     JSON_BUILD_OBJECT(
@@ -257,12 +231,14 @@ def _fetch_source_routes(url: str) -> list[dict]:
                 ) FILTER (WHERE c.id IS NOT NULL),
                 '[]'::json
             ) AS cities
-        FROM route_weekday_profiles p
-        JOIN routes r ON r.id = p.route_id
+        FROM route_weekday_template t
+        JOIN routes r ON r.id = t.route_id
+        LEFT JOIN route_weekday_profiles p
+               ON p.route_id = t.route_id AND p.weekday = t.weekday
         LEFT JOIN route_weekday_cities c ON c.profile_id = p.id
-        WHERE r.active IS TRUE AND p.weekday BETWEEN 0 AND 6
-        GROUP BY p.weekday, r.code, r.name, p.display_name, p.position
-        ORDER BY p.weekday, p.position, r.code;
+        WHERE r.active IS TRUE AND t.weekday BETWEEN 0 AND 6
+        GROUP BY t.weekday, r.code, r.name, t.position
+        ORDER BY t.weekday, t.position, r.code;
     """
     try:
         with _source_connection(url) as connection, connection.cursor() as cursor:
@@ -282,7 +258,6 @@ def _fetch_source_routes(url: str) -> list[dict]:
 
     matrix_value = setting.get("value") if setting else None
     notes_by_day = _matrix_day_notes(matrix_value)
-    matrix_destinations = _matrix_route_destinations(matrix_value)
     routes: list[dict] = []
     seen: set[str] = set()
     for row in rows:
@@ -298,9 +273,7 @@ def _fetch_source_routes(url: str) -> list[dict]:
             "origem_id": source_id,
             "dia_semana": WEEKDAYS[weekday],
             "rota": code,
-            "destino": matrix_destinations.get(
-                (weekday, code.upper()), _clean_text(row["destination"])
-            ),
+            "destino": _clean_text(row["destination"]),
             "observacao": notes_by_day.get(weekday, ""),
             "ordem": int(row.get("position") or 0),
             "cidades": _normalize_cities(row.get("cities")),

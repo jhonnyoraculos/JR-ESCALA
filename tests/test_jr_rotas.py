@@ -31,16 +31,6 @@ class TripDurationTests(unittest.TestCase):
             "Observação antes das rotas · COLETA ESPECIAL · Retorno após as 16h",
         )
 
-    def test_uses_destination_specific_to_each_weekday_from_matrix(self):
-        destinations = jr_rotas._matrix_route_destinations(
-            {
-                "0": ["SANTA LUZIA (R.600)"],
-                "3": ["PEDRO LEOPOLDO (R.600)"],
-            }
-        )
-        self.assertEqual(destinations[(0, "R.600")], "SANTA LUZIA")
-        self.assertEqual(destinations[(3, "R.600")], "PEDRO LEOPOLDO")
-
     def test_holiday_on_last_day_of_trip_is_reported(self):
         routes = [
             {
@@ -82,6 +72,31 @@ class TripDurationTests(unittest.TestCase):
         self.assertEqual(len(alerts), 1)
         self.assertEqual(alerts[0].holiday_date, date(2026, 9, 30))
         self.assertEqual(alerts[0].return_date, date(2026, 9, 30))
+
+    def test_source_uses_official_template_and_main_route_name(self):
+        connection = mock.MagicMock()
+        connection.__enter__.return_value = connection
+        cursor = mock.MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        cursor.fetchall.return_value = [
+            {
+                "weekday": 3,
+                "code": "R.600",
+                "destination": "PEDRO LEOPOLDO",
+                "position": 7,
+                "cities": [],
+            }
+        ]
+        cursor.fetchone.return_value = {"value": "{}"}
+
+        with mock.patch.object(jr_rotas, "_source_connection", return_value=connection):
+            routes = jr_rotas._fetch_source_routes("postgresql://read-only")
+
+        source_query = cursor.execute.call_args_list[0].args[0]
+        self.assertIn("route_weekday_template", source_query)
+        self.assertIn("r.name AS destination", source_query)
+        self.assertEqual(routes[0]["dia_semana"], "quinta")
+        self.assertEqual(routes[0]["destino"], "PEDRO LEOPOLDO")
 
 
 class SnapshotTests(unittest.TestCase):
