@@ -1,0 +1,249 @@
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from web import db, jr_rotas, services
+
+
+class ServiceCrudTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.db_path = Path(self.temp_dir.name) / "test.db"
+        self.patches = (
+            mock.patch.object(db, "DB_PATH", self.db_path),
+            mock.patch.object(db, "USE_POSTGRES", False),
+        )
+        for patcher in self.patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        db.init_db()
+        self.motorista = services.add_colaborador("Motorista", "Motorista")
+        self.ajudante = services.add_colaborador("Ajudante", "Ajudante")
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_carregamento_create_update_delete_and_duplicate_protection(self):
+        carregamento_id = services.salvar_carregamento(
+            "2026-10-01",
+            "R.10 - DIVINÓPOLIS",
+            None,
+            self.motorista,
+            self.ajudante,
+            "ROTA 1 DIA (BATE E VOLTA)",
+            data_saida="2026-10-02",
+        )
+        services.criar_bloqueios_para_carregamento(
+            carregamento_id,
+            "2026-10-01",
+            [self.motorista, self.ajudante],
+            "ROTA 1 DIA (BATE E VOLTA)",
+        )
+
+        with self.assertRaisesRegex(ValueError, "Já existe"):
+            services.salvar_carregamento(
+                "2026-10-01",
+                "R.10 - DIVINÓPOLIS",
+                None,
+                None,
+                None,
+                "0",
+            )
+
+        services.atualizar_carregamento(
+            carregamento_id,
+            "2026-10-02",
+            "2026-10-03",
+            "R.10 - DIVINÓPOLIS",
+            "ABC-1D23",
+            self.motorista,
+            self.ajudante,
+            "ROTA 1 DIA (BATE E VOLTA)",
+            "Atualizado",
+        )
+        updated = services.obter_carregamento(carregamento_id)
+        self.assertEqual(updated["data"], "2026-10-02")
+        self.assertEqual(updated["placa"], "ABC-1D23")
+        self.assertEqual(updated["observacao_extra"], "Atualizado")
+        self.assertEqual(updated["revisado"], 1)
+
+        with self.assertRaisesRegex(ValueError, "pessoas diferentes"):
+            services.atualizar_carregamento(
+                carregamento_id,
+                "2026-10-02",
+                "2026-10-03",
+                "R.10 - DIVINÓPOLIS",
+                None,
+                self.motorista,
+                self.motorista,
+                "0",
+            )
+
+        services.remover_carregamento_completo(carregamento_id)
+        self.assertIsNone(services.obter_carregamento(carregamento_id))
+        with db.get_connection() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM bloqueios WHERE carregamento_id = ?;",
+                (carregamento_id,),
+            )
+            self.assertEqual(cursor.fetchone()[0], 0)
+
+    def test_oficina_edit_persists_changed_date_and_delete(self):
+        oficina_id = services.salvar_oficina(
+            "2026-10-01",
+            self.motorista,
+            "ABC-1D23",
+            "Revisão",
+            data_saida="2026-10-02",
+        )
+        services.editar_oficina(
+            oficina_id,
+            "2026-10-03",
+            self.motorista,
+            "ABC-1D23",
+            "Pneus",
+            "Concluído",
+            "2026-10-04",
+        )
+        self.assertEqual(services.listar_oficinas("2026-10-01"), [])
+        updated = services.obter_oficina(oficina_id)
+        self.assertEqual(updated["data"], "2026-10-03")
+        self.assertEqual(updated["observacao"], "Pneus")
+        services.excluir_oficina(oficina_id)
+        self.assertIsNone(services.obter_oficina(oficina_id))
+
+    def test_folga_interval_is_validated_and_blocks_every_day(self):
+        folga_id = services.salvar_folga(
+            "2026-10-05", self.motorista, "2026-10-07"
+        )
+        indisponiveis = services.verificar_disponibilidade("2026-10-06")
+        self.assertIn(self.motorista, indisponiveis["motoristas"])
+
+        services.editar_folga(
+            folga_id,
+            "2026-10-08",
+            "2026-10-09",
+            None,
+            self.motorista,
+            None,
+            None,
+            None,
+        )
+        self.assertNotIn(
+            self.motorista,
+            services.verificar_disponibilidade("2026-10-06")["motoristas"],
+        )
+        self.assertIn(
+            self.motorista,
+            services.verificar_disponibilidade("2026-10-09")["motoristas"],
+        )
+        with self.assertRaisesRegex(ValueError, "Data inicial"):
+            services.salvar_folga(
+                "2026-10-10", self.ajudante, "2026-10-09"
+            )
+        services.remover_folga(folga_id)
+        self.assertEqual(services.listar_folgas("2026-10-08"), [])
+
+    def test_escala_cd_edit_persists_changed_date_and_delete(self):
+        escala_id = services.adicionar_escala_cd(
+            "2026-10-10", self.motorista, self.ajudante, "Separação"
+        )
+        services.editar_escala_cd(
+            escala_id,
+            "2026-10-11",
+            self.motorista,
+            self.ajudante,
+            "Expedição",
+        )
+        self.assertEqual(services.listar_escala_cd("2026-10-10"), [])
+        updated = services.obter_escala_cd(escala_id)
+        self.assertEqual(updated["data"], "2026-10-11")
+        self.assertEqual(updated["observacao"], "Expedição")
+        with self.assertRaisesRegex(ValueError, "pessoas diferentes"):
+            services.editar_escala_cd(
+                escala_id,
+                "2026-10-11",
+                self.motorista,
+                self.motorista,
+                "Inválida",
+            )
+        services.excluir_escala_cd(escala_id)
+        self.assertIsNone(services.obter_escala_cd(escala_id))
+
+    def test_supporting_cadastros_crud_and_protected_route(self):
+        caminhao_id = services.add_caminhao("abc-1d23", "Modelo A", "Novo")
+        services.editar_caminhao(
+            caminhao_id, "def-4g56", "Modelo B", "Atualizado", False
+        )
+        caminhao = next(
+            item
+            for item in services.listar_caminhoes(ativos_only=False)
+            if item["id"] == caminhao_id
+        )
+        self.assertEqual(caminhao["placa"], "DEF-4G56")
+        self.assertEqual(caminhao["ativo"], 0)
+
+        rota_id = services.adicionar_rota_semana(
+            "segunda", "R.99", "Destino", "Observação"
+        )
+        services.editar_rota_semana(
+            rota_id, "terça", "R.99", "Destino novo", "Atualizada"
+        )
+        rota = services.listar_rotas_semanais("terça")[0]
+        self.assertEqual(rota["destino"], "Destino novo")
+
+        quinta_id = services.adicionar_rota_semana(
+            "quinta", "R.98", "Carga automática", ""
+        )
+        with mock.patch.object(jr_rotas, "source_database_url", return_value=None):
+            self.assertEqual(
+                services.preencher_carregamentos_automaticos("2026-10-01"), 1
+            )
+            self.assertEqual(
+                services.preencher_carregamentos_automaticos("2026-10-01"), 0
+            )
+        self.assertEqual(len(services.listar_carregamentos("2026-10-01")), 1)
+
+        with db.get_connection() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                INSERT INTO rotas_semanais
+                    (dia_semana, rota, destino, observacao, origem, origem_id)
+                VALUES ('quarta', 'R.100', 'Oficial', '', 'jr_rotas', '2:R.100');
+                """
+            )
+            connection.commit()
+        with self.assertRaisesRegex(ValueError, "JR Rotas"):
+            services.remover_rota_semana(
+                services.listar_rotas_semanais("quarta")[0]["id"]
+            )
+
+        ferias_id = services.adicionar_ferias(
+            self.ajudante, "2026-11-01", "2026-11-05", "Descanso"
+        )
+        services.atualizar_ferias(
+            ferias_id, self.ajudante, "2026-11-02", "2026-11-06", "Atualizada"
+        )
+        ferias = next(item for item in services.listar_ferias() if item["id"] == ferias_id)
+        self.assertEqual(ferias["data_inicio"], "2026-11-02")
+
+        services.atualizar_colaborador(
+            self.motorista, "Motorista Atualizado", "Motorista", "OK", None, False
+        )
+        colaborador = services.obter_colaborador_por_id(self.motorista)
+        self.assertEqual(colaborador["nome"], "Motorista Atualizado")
+        self.assertEqual(colaborador["ativo"], 0)
+
+        services.remover_ferias(ferias_id)
+        services.remover_rota_semana(quinta_id)
+        services.remover_rota_semana(rota_id)
+        services.remover_caminhao(caminhao_id)
+        services.excluir_colaborador(self.motorista)
+        self.assertIsNone(services.obter_colaborador_por_id(self.motorista))
+
+
+if __name__ == "__main__":
+    unittest.main()

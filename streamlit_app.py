@@ -307,6 +307,38 @@ def _numero_rota_ordem(item: dict) -> tuple[int, int | str]:
 
 def _request_confirm(key: str, payload: object = True) -> None:
     st.session_state[key] = payload
+    st.rerun()
+
+
+_EDIT_FORM_PREFIXES = {
+    "oficina_edit_id": ("oficina_form_",),
+    "folga_edit_id": ("folga_form_",),
+    "escala_edit_id": ("escala_form_",),
+    "rota_edit_id": ("rotas_form_",),
+    "caminhao_edit_id": ("caminhao_form_",),
+    "ferias_edit_id": ("ferias_form_",),
+}
+
+
+def _clear_widget_state(prefixes: tuple[str, ...]) -> None:
+    for key in list(st.session_state):
+        if any(key.startswith(prefix) for prefix in prefixes):
+            st.session_state.pop(key, None)
+
+
+def _set_edit_target(state_key: str, item_id: int | None, *, rerun: bool = True) -> None:
+    st.session_state[f"_pending_{state_key}"] = item_id
+    if rerun:
+        st.rerun()
+
+
+def _apply_pending_edit_target(state_key: str) -> None:
+    pending_key = f"_pending_{state_key}"
+    if pending_key not in st.session_state:
+        return
+    item_id = st.session_state.pop(pending_key)
+    _clear_widget_state(_EDIT_FORM_PREFIXES.get(state_key, ()))
+    st.session_state[state_key] = item_id
 
 
 def _confirm_prompt(key: str, message: str) -> bool:
@@ -601,9 +633,13 @@ def page_carregamentos() -> None:
         )
 
     if prev_data and prev_data != data_iso:
-        st.session_state["carreg_edit_id"] = None
+        st.session_state["carreg_pending_edit_id"] = None
+        st.session_state["carreg_pending_reset_form"] = True
+        st.session_state.pop("carreg_select", None)
+        st.session_state["carreg_last_selected_id"] = None
     if prev_saida and prev_saida != data_saida_iso:
-        st.session_state["carreg_edit_id"] = None
+        st.session_state["carreg_pending_edit_id"] = None
+        st.session_state["carreg_pending_reset_form"] = True
 
     st.session_state["carreg_data_iso"] = data_iso
     st.session_state["carreg_data_saida_iso"] = data_saida_iso
@@ -668,19 +704,6 @@ def page_carregamentos() -> None:
                 _set_flash("error", f"Erro ao limpar alterações: {exc}")
             _clear_cached_data()
             st.rerun()
-    elif st.session_state.get("carreg_confirm_dup") is not None:
-        dup_id = st.session_state.get("carreg_confirm_dup")
-        if _confirm_prompt("carreg_confirm_dup", f"Duplicar carregamento #{dup_id}?"):
-            try:
-                svc.duplicar_carregamento(dup_id)
-                _set_flash(
-                    "success", "Carregamento duplicado. Placa, motorista e ajudante ficaram em branco."
-                )
-            except Exception as exc:
-                _set_flash("error", f"Erro ao duplicar: {exc}")
-            st.session_state["carreg_edit_id"] = None
-            _clear_cached_data()
-            st.rerun()
     elif st.session_state.get("carreg_confirm_excluir") is not None:
         excluir_id = st.session_state.get("carreg_confirm_excluir")
         if _confirm_prompt("carreg_confirm_excluir", f"Excluir carregamento #{excluir_id}?"):
@@ -692,7 +715,8 @@ def page_carregamentos() -> None:
                 _set_flash("success", "Carregamento excluído.")
             except Exception as exc:
                 _set_flash("error", f"Erro ao excluir: {exc}")
-            st.session_state["carreg_edit_id"] = None
+            st.session_state["carreg_pending_edit_id"] = None
+            st.session_state["carreg_pending_reset_form"] = True
             _clear_cached_data()
             st.rerun()
 
@@ -786,12 +810,15 @@ def page_carregamentos() -> None:
     ):
         st.session_state.pop("carreg_select", None)
 
+    selectbox_args = {}
+    if "carreg_select" not in st.session_state:
+        selectbox_args["index"] = index
     selected_id = st.selectbox(
         "Selecionar carregamento",
         option_ids,
-        index=index,
         key="carreg_select",
         format_func=lambda cid: label_map.get(cid, "Selecionar carregamento"),
+        **selectbox_args,
     )
     try:
         selected_id = int(selected_id) if selected_id is not None else None
@@ -1045,6 +1072,7 @@ def page_carregamentos() -> None:
                 _set_flash("success", "Carregamento salvo.")
         except Exception as exc:
             _set_flash("error", f"Erro ao salvar: {exc}")
+            st.rerun()
         _clear_cached_data()
         st.session_state["carreg_pending_edit_id"] = None
         st.session_state["carreg_pending_reset_form"] = True
@@ -1093,7 +1121,7 @@ def page_carregamentos() -> None:
             _cell(cols[3], item.get("ajudante_nome") or "-", extra_class=row_class)
             _cell(cols[4], obs_texto, extra_class=row_class)
             _cell(cols[5], saida_valor, nowrap=True, extra_class=row_class)
-            action_cols = cols[6].columns([1, 1, 1])
+            action_cols = cols[6].columns(2)
             item_id = item.get("id")
             if action_cols[0].button(
                 "Editar", key=f"carreg_row_edit_{item_id}", use_container_width=True
@@ -1102,10 +1130,6 @@ def page_carregamentos() -> None:
                 st.session_state["carreg_pending_reset_form"] = True
                 st.rerun()
             if action_cols[1].button(
-                "Duplicar", key=f"carreg_row_dup_{item_id}", use_container_width=True
-            ):
-                _request_confirm("carreg_confirm_dup", item_id)
-            if action_cols[2].button(
                 "Excluir", key=f"carreg_row_del_{item_id}", use_container_width=True
             ):
                 _request_confirm("carreg_confirm_excluir", item_id)
@@ -1115,6 +1139,7 @@ def page_carregamentos() -> None:
 
 
 def page_oficinas() -> None:
+    _apply_pending_edit_target("oficina_edit_id")
     st.subheader("Oficinas")
     prev_data = st.session_state.get("oficina_data_iso")
     col1, col2 = st.columns(2)
@@ -1128,7 +1153,8 @@ def page_oficinas() -> None:
         ).isoformat()
 
     if prev_data and prev_data != data_iso:
-        st.session_state["oficina_edit_id"] = None
+        _set_edit_target("oficina_edit_id", None, rerun=False)
+        _apply_pending_edit_target("oficina_edit_id")
     st.session_state["oficina_data_iso"] = data_iso
 
     registros = _cache_listar_oficinas(data_iso)
@@ -1163,14 +1189,15 @@ def page_oficinas() -> None:
                 _set_flash("success", "Oficina excluída.")
             except Exception as exc:
                 _set_flash("error", f"Erro ao excluir: {exc}")
-            st.session_state["oficina_edit_id"] = None
+            _set_edit_target("oficina_edit_id", None, rerun=False)
             _clear_cached_data()
             st.rerun()
 
     edit_id = st.session_state.get("oficina_edit_id")
     edit_item = _cache_obter_oficina(edit_id) if edit_id else None
     if edit_item and edit_item.get("data") != data_iso:
-        st.session_state["oficina_edit_id"] = None
+        _set_edit_target("oficina_edit_id", None, rerun=False)
+        _apply_pending_edit_target("oficina_edit_id")
         edit_item = None
 
     def _filtrar_motoristas():
@@ -1280,6 +1307,7 @@ def page_oficinas() -> None:
             if edit_item:
                 svc.editar_oficina(
                     edit_item["id"],
+                    form_data,
                     motorista_id,
                     placa,
                     observacao,
@@ -1301,14 +1329,14 @@ def page_oficinas() -> None:
                 _set_flash("success", "Oficina salva.")
         except Exception as exc:
             _set_flash("error", f"Erro ao salvar: {exc}")
-        st.session_state["oficina_edit_id"] = None
+            st.rerun()
+        _set_edit_target("oficina_edit_id", None, rerun=False)
         _clear_cached_data()
         st.rerun()
 
     if edit_item:
         if st.button("Cancelar edição", key="oficina_cancelar"):
-            st.session_state["oficina_edit_id"] = None
-            st.rerun()
+            _set_edit_target("oficina_edit_id", None)
 
     if registros:
         col_sizes = [1.2, 2.2, 2.8, 1.4, 2.4]
@@ -1329,7 +1357,7 @@ def page_oficinas() -> None:
             if action_cols[0].button(
                 "Editar", key=f"oficina_row_edit_{item_id}", use_container_width=True
             ):
-                st.session_state["oficina_edit_id"] = item_id
+                _set_edit_target("oficina_edit_id", item_id)
             if action_cols[1].button(
                 "Excluir", key=f"oficina_row_del_{item_id}", use_container_width=True
             ):
@@ -1339,6 +1367,7 @@ def page_oficinas() -> None:
 
 
 def page_folgas() -> None:
+    _apply_pending_edit_target("folga_edit_id")
     st.subheader("Folgas")
     prev_data = st.session_state.get("folga_data_iso")
     data_iso = st.date_input("Data", value=_to_date(date.today().isoformat()), key="folga_data").isoformat()
@@ -1346,7 +1375,8 @@ def page_folgas() -> None:
     st.caption(f"Data base {svc.data_iso_para_br(data_iso)}")
 
     if prev_data and prev_data != data_iso:
-        st.session_state["folga_edit_id"] = None
+        _set_edit_target("folga_edit_id", None, rerun=False)
+        _apply_pending_edit_target("folga_edit_id")
     st.session_state["folga_data_iso"] = data_iso
 
     registros = _cache_listar_folgas(data_iso)
@@ -1377,7 +1407,7 @@ def page_folgas() -> None:
                 _set_flash("success", "Folga excluída.")
             except Exception as exc:
                 _set_flash("error", f"Erro ao excluir: {exc}")
-            st.session_state["folga_edit_id"] = None
+            _set_edit_target("folga_edit_id", None, rerun=False)
             _clear_cached_data()
             st.rerun()
 
@@ -1460,14 +1490,14 @@ def page_folgas() -> None:
                 _set_flash("success", "Folga salva.")
         except Exception as exc:
             _set_flash("error", f"Erro ao salvar: {exc}")
-        st.session_state["folga_edit_id"] = None
+            st.rerun()
+        _set_edit_target("folga_edit_id", None, rerun=False)
         _clear_cached_data()
         st.rerun()
 
     if edit_item:
         if st.button("Cancelar edição", key="folga_cancelar"):
-            st.session_state["folga_edit_id"] = None
-            st.rerun()
+            _set_edit_target("folga_edit_id", None)
 
     if registros:
         col_sizes = [2.4, 1.2, 2.2, 2.2]
@@ -1491,7 +1521,7 @@ def page_folgas() -> None:
             if action_cols[0].button(
                 "Editar", key=f"folga_row_edit_{item_id}", use_container_width=True
             ):
-                st.session_state["folga_edit_id"] = item_id
+                _set_edit_target("folga_edit_id", item_id)
             if action_cols[1].button(
                 "Excluir", key=f"folga_row_del_{item_id}", use_container_width=True
             ):
@@ -1501,6 +1531,7 @@ def page_folgas() -> None:
 
 
 def page_escala_cd() -> None:
+    _apply_pending_edit_target("escala_edit_id")
     st.subheader("Escala (CD)")
     prev_data = st.session_state.get("escala_data_iso")
     col1, col2 = st.columns(2)
@@ -1514,7 +1545,8 @@ def page_escala_cd() -> None:
         ).isoformat()
 
     if prev_data and prev_data != data_iso:
-        st.session_state["escala_edit_id"] = None
+        _set_edit_target("escala_edit_id", None, rerun=False)
+        _apply_pending_edit_target("escala_edit_id")
     st.session_state["escala_data_iso"] = data_iso
 
     registros = _cache_listar_escala_cd(data_iso)
@@ -1556,14 +1588,15 @@ def page_escala_cd() -> None:
                 _set_flash("success", "Escala (CD) excluída.")
             except Exception as exc:
                 _set_flash("error", f"Erro ao excluir: {exc}")
-            st.session_state["escala_edit_id"] = None
+            _set_edit_target("escala_edit_id", None, rerun=False)
             _clear_cached_data()
             st.rerun()
 
     edit_id = st.session_state.get("escala_edit_id")
     edit_item = _cache_obter_escala_cd(edit_id) if edit_id else None
     if edit_item and edit_item.get("data") != data_iso:
-        st.session_state["escala_edit_id"] = None
+        _set_edit_target("escala_edit_id", None, rerun=False)
+        _apply_pending_edit_target("escala_edit_id")
         edit_item = None
 
     def _filtrar(lista, indis, selecionado):
@@ -1650,21 +1683,23 @@ def page_escala_cd() -> None:
             st.rerun()
         try:
             if edit_item:
-                svc.editar_escala_cd(edit_id, motorista_id, ajudante_id, observacao)
+                svc.editar_escala_cd(
+                    edit_id, form_data, motorista_id, ajudante_id, observacao
+                )
                 _set_flash("success", "Escala (CD) atualizada.")
             else:
                 svc.adicionar_escala_cd(form_data, motorista_id, ajudante_id, observacao)
                 _set_flash("success", "Escala (CD) salva.")
         except Exception as exc:
             _set_flash("error", f"Erro ao salvar: {exc}")
-        st.session_state["escala_edit_id"] = None
+            st.rerun()
+        _set_edit_target("escala_edit_id", None, rerun=False)
         _clear_cached_data()
         st.rerun()
 
     if edit_item:
         if st.button("Cancelar edição", key="escala_cancelar"):
-            st.session_state["escala_edit_id"] = None
-            st.rerun()
+            _set_edit_target("escala_edit_id", None)
 
     if registros:
         col_sizes = [2.2, 2.2, 2.8, 2]
@@ -1683,7 +1718,7 @@ def page_escala_cd() -> None:
             if action_cols[0].button(
                 "Editar", key=f"escala_row_edit_{item_id}", use_container_width=True
             ):
-                st.session_state["escala_edit_id"] = item_id
+                _set_edit_target("escala_edit_id", item_id)
             if action_cols[1].button(
                 "Excluir", key=f"escala_row_del_{item_id}", use_container_width=True
             ):
@@ -1693,6 +1728,7 @@ def page_escala_cd() -> None:
 
 
 def page_rotas_semanais() -> None:
+    _apply_pending_edit_target("rota_edit_id")
     st.subheader("Rotas Semanais")
     dias = svc.DIAS_SEMANA
     dia_default = dias[0][0]
@@ -1782,7 +1818,8 @@ def page_rotas_semanais() -> None:
     dia_label = st.selectbox("Dia da semana", dia_labels, key="rotas_dia")
     dia = dia_map.get(dia_label, dia_default)
     if prev_dia and prev_dia != dia:
-        st.session_state["rota_edit_id"] = None
+        _set_edit_target("rota_edit_id", None, rerun=False)
+        _apply_pending_edit_target("rota_edit_id")
     st.session_state["rotas_dia_value"] = dia
     registros = _cache_listar_rotas_semanais(dia)
 
@@ -1855,7 +1892,8 @@ def page_rotas_semanais() -> None:
                 _set_flash("success", "Rota semanal salva.")
         except Exception as exc:
             _set_flash("error", f"Erro ao salvar: {exc}")
-        st.session_state["rota_edit_id"] = None
+            st.rerun()
+        _set_edit_target("rota_edit_id", None, rerun=False)
         _clear_cached_data()
         st.rerun()
 
@@ -1867,14 +1905,13 @@ def page_rotas_semanais() -> None:
                 _set_flash("success", "Rota semanal excluída.")
             except Exception as exc:
                 _set_flash("error", f"Erro ao excluir: {exc}")
-            st.session_state["rota_edit_id"] = None
+            _set_edit_target("rota_edit_id", None, rerun=False)
             _clear_cached_data()
             st.rerun()
 
     if edit_item:
         if st.button("Cancelar edição", key="rotas_cancelar"):
-            st.session_state["rota_edit_id"] = None
-            st.rerun()
+            _set_edit_target("rota_edit_id", None)
 
     if registros:
         col_sizes = [1.2, 2.2, 2.6, 2]
@@ -1896,7 +1933,7 @@ def page_rotas_semanais() -> None:
                 use_container_width=True,
                 disabled=item.get("origem") == "jr_rotas",
             ):
-                st.session_state["rota_edit_id"] = item_id
+                _set_edit_target("rota_edit_id", item_id)
             if action_cols[1].button(
                 "Excluir",
                 key=f"rotas_row_del_{item_id}",
@@ -1909,6 +1946,7 @@ def page_rotas_semanais() -> None:
 
 
 def page_caminhoes() -> None:
+    _apply_pending_edit_target("caminhao_edit_id")
     st.subheader("Caminhões")
     registros = _cache_listar_caminhoes(ativos_only=False)
 
@@ -1960,7 +1998,8 @@ def page_caminhoes() -> None:
                 _set_flash("success", "Caminhão salvo.")
         except Exception as exc:
             _set_flash("error", f"Erro ao salvar: {exc}")
-        st.session_state["caminhao_edit_id"] = None
+            st.rerun()
+        _set_edit_target("caminhao_edit_id", None, rerun=False)
         _clear_cached_data()
         st.rerun()
 
@@ -1972,14 +2011,13 @@ def page_caminhoes() -> None:
                 _set_flash("success", "Caminhão excluído.")
             except Exception as exc:
                 _set_flash("error", f"Erro ao excluir: {exc}")
-            st.session_state["caminhao_edit_id"] = None
+            _set_edit_target("caminhao_edit_id", None, rerun=False)
             _clear_cached_data()
             st.rerun()
 
     if edit_item:
         if st.button("Cancelar edição", key="caminhao_cancelar"):
-            st.session_state["caminhao_edit_id"] = None
-            st.rerun()
+            _set_edit_target("caminhao_edit_id", None)
 
     if registros:
         col_sizes = [1.2, 2.0, 2.4, 1.2, 2.2]
@@ -2000,7 +2038,7 @@ def page_caminhoes() -> None:
             if action_cols[0].button(
                 "Editar", key=f"caminhao_row_edit_{item_id}", use_container_width=True
             ):
-                st.session_state["caminhao_edit_id"] = item_id
+                _set_edit_target("caminhao_edit_id", item_id)
             if action_cols[1].button(
                 "Excluir", key=f"caminhao_row_del_{item_id}", use_container_width=True
             ):
@@ -2010,6 +2048,7 @@ def page_caminhoes() -> None:
 
 
 def page_ferias() -> None:
+    _apply_pending_edit_target("ferias_edit_id")
     st.subheader("Férias")
     registros = _cache_listar_ferias()
     colaboradores = _cache_listar_colaboradores(ativos_only=True)
@@ -2099,7 +2138,8 @@ def page_ferias() -> None:
                 _set_flash("success", "Férias salvas.")
         except Exception as exc:
             _set_flash("error", f"Erro ao salvar: {exc}")
-        st.session_state["ferias_edit_id"] = None
+            st.rerun()
+        _set_edit_target("ferias_edit_id", None, rerun=False)
         _clear_cached_data()
         st.rerun()
 
@@ -2111,14 +2151,13 @@ def page_ferias() -> None:
                 _set_flash("success", "Férias excluídas.")
             except Exception as exc:
                 _set_flash("error", f"Erro ao excluir: {exc}")
-            st.session_state["ferias_edit_id"] = None
+            _set_edit_target("ferias_edit_id", None, rerun=False)
             _clear_cached_data()
             st.rerun()
 
     if edit_item:
         if st.button("Cancelar edição", key="ferias_cancelar"):
-            st.session_state["ferias_edit_id"] = None
-            st.rerun()
+            _set_edit_target("ferias_edit_id", None)
 
     if registros:
         col_sizes = [2.2, 1.2, 1.2, 2.2, 1.2, 2]
@@ -2141,7 +2180,7 @@ def page_ferias() -> None:
             if action_cols[0].button(
                 "Editar", key=f"ferias_row_edit_{item_id}", use_container_width=True
             ):
-                st.session_state["ferias_edit_id"] = item_id
+                _set_edit_target("ferias_edit_id", item_id)
             if action_cols[1].button(
                 "Excluir", key=f"ferias_row_del_{item_id}", use_container_width=True
             ):
@@ -2153,8 +2192,10 @@ def page_ferias() -> None:
 def page_colaboradores() -> None:
     st.subheader("Colaboradores")
     registros = _cache_listar_colaboradores(ativos_only=False)
+    if st.session_state.pop("colab_reset_create_form", False):
+        _clear_widget_state(("colab_new_",))
 
-    with st.form("colab_create_form", clear_on_submit=True):
+    with st.form("colab_create_form"):
         col_a, col_b, col_c = st.columns(3)
         with col_a:
             novo_nome = st.text_input("Nome", key="colab_new_nome")
@@ -2174,6 +2215,8 @@ def page_colaboradores() -> None:
             _set_flash("success", "Colaborador salvo.")
         except Exception as exc:
             _set_flash("error", f"Erro ao salvar: {exc}")
+            st.rerun()
+        st.session_state["colab_reset_create_form"] = True
         _clear_cached_data()
         st.rerun()
 
@@ -2199,21 +2242,22 @@ def page_colaboradores() -> None:
                 st.session_state["colab_edit_id"] = item_id
                 st.session_state.pop("colab_confirm_desativar", None)
                 st.session_state.pop("colab_confirm_excluir", None)
+                st.rerun()
             if action_cols[1].button(
                 "Desativar",
                 key=f"colab_row_desativar_{item_id}",
                 use_container_width=True,
                 disabled=not bool(item.get("ativo")),
             ):
-                _request_confirm("colab_confirm_desativar", item_id)
                 st.session_state["colab_edit_id"] = None
                 st.session_state.pop("colab_confirm_excluir", None)
+                _request_confirm("colab_confirm_desativar", item_id)
             if action_cols[2].button(
                 "Excluir", key=f"colab_row_excluir_{item_id}", use_container_width=True
             ):
-                _request_confirm("colab_confirm_excluir", item_id)
                 st.session_state["colab_edit_id"] = None
                 st.session_state.pop("colab_confirm_desativar", None)
+                _request_confirm("colab_confirm_excluir", item_id)
 
             if st.session_state.get("colab_edit_id") == item_id:
                 st.info(f"Editando **{item.get('nome') or 'colaborador'}**")
@@ -2266,6 +2310,7 @@ def page_colaboradores() -> None:
                             _set_flash("success", "Colaborador atualizado.")
                         except Exception as exc:
                             _set_flash("error", f"Erro ao atualizar: {exc}")
+                            st.rerun()
                     st.session_state["colab_edit_id"] = None
                     _clear_cached_data()
                     st.rerun()
@@ -2393,6 +2438,11 @@ def page_log() -> None:
         excluir_id = st.session_state.get("log_confirm_excluir")
         if _confirm_prompt("log_confirm_excluir", f"Excluir carregamento #{excluir_id}?"):
             try:
+                registro = _cache_obter_carregamento(excluir_id)
+                if registro:
+                    svc.registrar_rota_suprimida(
+                        registro.get("data"), registro.get("rota")
+                    )
                 svc.remover_carregamento_completo(excluir_id)
                 _set_flash("success", "Carregamento excluído.")
             except Exception as exc:
@@ -2542,6 +2592,7 @@ def page_log() -> None:
                         _set_flash("success", "Colaboradores atualizados.")
                     except Exception as exc:
                         _set_flash("error", f"Erro ao atualizar colaboradores: {exc}")
+                        st.rerun()
                     _clear_cached_data()
                     st.rerun()
 
@@ -2579,6 +2630,7 @@ def page_log() -> None:
                         _set_flash("success", "Ajuste registrado.")
                     except Exception as exc:
                         _set_flash("error", f"Erro ao registrar ajuste: {exc}")
+                        st.rerun()
                     _clear_cached_data()
                     st.rerun()
 

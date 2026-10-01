@@ -315,8 +315,12 @@ def verificar_disponibilidade(data_iso: str, ignorar: dict[str, int] | None = No
 
         for folga_id, col_id in _safe_fetch(
             cur,
-            "SELECT id, colaborador_id FROM folgas WHERE data = ?",
-            (data_iso,),
+            """
+            SELECT id, colaborador_id
+            FROM folgas
+            WHERE data <= ? AND COALESCE(data_fim, data) >= ?
+            """,
+            (data_iso, data_iso),
         ):
             if not col_id or ignorar.get("folga_id") == folga_id:
                 continue
@@ -730,6 +734,13 @@ def salvar_folga(
 ) -> int:
     data_fim = data_fim or None
     data_saida = data_saida or None
+    if data_fim:
+        validar_periodo(data_inicio, data_fim)
+    indisponiveis = verificar_disponibilidade(data_inicio)
+    if colaborador_id in indisponiveis["motoristas"].union(
+        indisponiveis["ajudantes"]
+    ):
+        raise ValueError("Colaborador indisponível nesta data.")
     with get_connection() as conn:
         cur = conn.cursor()
         novo_id = insert_and_get_id(
@@ -814,6 +825,16 @@ def editar_folga(
     observacao_extra: str | None,
     observacao_cor: str | None,
 ) -> None:
+    data_fim = data_fim or None
+    if data_fim:
+        validar_periodo(data_inicio, data_fim)
+    indisponiveis = verificar_disponibilidade(
+        data_inicio, {"folga_id": folga_id}
+    )
+    if colaborador_id in indisponiveis["motoristas"].union(
+        indisponiveis["ajudantes"]
+    ):
+        raise ValueError("Colaborador indisponível nesta data.")
     with get_connection() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -1003,6 +1024,12 @@ def salvar_carregamento(
 
     with get_connection() as conn:
         cur = conn.cursor()
+        cur.execute(
+            "SELECT id FROM carregamentos WHERE data = ? AND rota = ? LIMIT 1;",
+            (data_iso, rota_texto),
+        )
+        if cur.fetchone() is not None:
+            raise ValueError("Já existe um carregamento desta rota nesta data.")
         novo_id = insert_and_get_id(
             cur,
             """
@@ -1049,6 +1076,9 @@ def atualizar_carregamento(
     observacao_extra: str | None = None,
     observacao_cor: str | None = None,
 ) -> None:
+    if motorista_id and ajudante_id and motorista_id == ajudante_id:
+        raise ValueError("Motorista e ajudante devem ser pessoas diferentes.")
+
     placa_db = placa.strip().upper() if placa else None
     observacao_db = observacao.strip() if observacao else None
     observacao_extra_db = observacao_extra.strip() if observacao_extra else None
@@ -1057,6 +1087,16 @@ def atualizar_carregamento(
     revisado_db = 1
     with get_connection() as conn:
         cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id FROM carregamentos
+            WHERE data = ? AND rota = ? AND id <> ?
+            LIMIT 1;
+            """,
+            (data_iso, rota_texto, carregamento_id),
+        )
+        if cur.fetchone() is not None:
+            raise ValueError("Já existe um carregamento desta rota nesta data.")
         cur.execute(
             """
             UPDATE carregamentos
@@ -1226,6 +1266,8 @@ def salvar_oficina(
     )
     if motorista_id and motorista_id in indis_colaboradores:
         raise ValueError("Motorista indisponível nesta data.")
+    if placa and placa.upper() in disponibilidade.get("caminhoes", set()):
+        raise ValueError("Caminhão indisponível nesta data.")
 
     data_saida_iso = data_saida or calcular_data_saida_padrao(data_iso)
     with get_connection() as conn:
@@ -1324,6 +1366,7 @@ def obter_oficina(oficina_id: int) -> dict | None:
 
 def editar_oficina(
     oficina_id: int,
+    data_iso: str,
     motorista_id: int | None,
     placa: str,
     observacao: str,
@@ -1331,16 +1374,27 @@ def editar_oficina(
     data_saida: str | None = None,
     observacao_cor: str | None = None,
 ) -> None:
+    disponibilidade = verificar_disponibilidade(
+        data_iso, {"oficina_id": oficina_id}
+    )
+    indis_colaboradores = disponibilidade.get("motoristas", set()).union(
+        disponibilidade.get("ajudantes", set())
+    )
+    if motorista_id and motorista_id in indis_colaboradores:
+        raise ValueError("Motorista indisponível nesta data.")
+    if placa and placa.upper() in disponibilidade.get("caminhoes", set()):
+        raise ValueError("Caminhão indisponível nesta data.")
     data_saida_iso = data_saida or None
     with get_connection() as conn:
         cur = conn.cursor()
         cur.execute(
             """
             UPDATE oficinas
-            SET motorista_id = ?, placa = ?, observacao = ?, observacao_extra = ?, data_saida = ?, observacao_cor = ?
+            SET data = ?, motorista_id = ?, placa = ?, observacao = ?, observacao_extra = ?, data_saida = ?, observacao_cor = ?
             WHERE id = ?;
             """,
             (
+                data_iso,
                 motorista_id,
                 placa,
                 observacao,
@@ -1669,6 +1723,16 @@ def sincronizar_rota_semana_com_carregamentos(
 
 
 def adicionar_escala_cd(data_iso: str, motorista_id: int | None, ajudante_id: int | None, observacao: str) -> int:
+    if motorista_id and ajudante_id and motorista_id == ajudante_id:
+        raise ValueError("Motorista e ajudante devem ser pessoas diferentes.")
+    disponibilidade = verificar_disponibilidade(data_iso)
+    indisponiveis = disponibilidade["motoristas"].union(
+        disponibilidade["ajudantes"]
+    )
+    if motorista_id and motorista_id in indisponiveis:
+        raise ValueError("Motorista indisponível nesta data.")
+    if ajudante_id and ajudante_id in indisponiveis:
+        raise ValueError("Ajudante indisponível nesta data.")
     with get_connection() as conn:
         cur = conn.cursor()
         novo_id = insert_and_get_id(
@@ -1723,16 +1787,34 @@ def obter_escala_cd(escala_id: int) -> dict | None:
         return dict(row) if row else None
 
 
-def editar_escala_cd(escala_id: int, motorista_id: int | None, ajudante_id: int | None, observacao: str) -> None:
+def editar_escala_cd(
+    escala_id: int,
+    data_iso: str,
+    motorista_id: int | None,
+    ajudante_id: int | None,
+    observacao: str,
+) -> None:
+    if motorista_id and ajudante_id and motorista_id == ajudante_id:
+        raise ValueError("Motorista e ajudante devem ser pessoas diferentes.")
+    disponibilidade = verificar_disponibilidade(
+        data_iso, {"escala_cd_id": escala_id}
+    )
+    indisponiveis = disponibilidade["motoristas"].union(
+        disponibilidade["ajudantes"]
+    )
+    if motorista_id and motorista_id in indisponiveis:
+        raise ValueError("Motorista indisponível nesta data.")
+    if ajudante_id and ajudante_id in indisponiveis:
+        raise ValueError("Ajudante indisponível nesta data.")
     with get_connection() as conn:
         cur = conn.cursor()
         cur.execute(
             """
             UPDATE escala_cd
-            SET motorista_id = ?, ajudante_id = ?, observacao = ?
+            SET data = ?, motorista_id = ?, ajudante_id = ?, observacao = ?
             WHERE id = ?;
             """,
-            (motorista_id, ajudante_id, observacao.strip(), escala_id),
+            (data_iso, motorista_id, ajudante_id, observacao.strip(), escala_id),
         )
         conn.commit()
 
