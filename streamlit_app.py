@@ -568,6 +568,15 @@ def _assistentes_sidebar(data_iso: str) -> None:
 def page_carregamentos() -> None:
     st.subheader("Carregamentos")
 
+    try:
+        sync_result = svc.sincronizar_rotas_jr()
+        if sync_result.changed:
+            _clear_cached_data()
+    except Exception:
+        # Durante uma indisponibilidade da origem, conserva o último estado
+        # válido em vez de remover ou substituir registros operacionais.
+        pass
+
     prev_data = st.session_state.get("carreg_data_iso")
     prev_saida = st.session_state.get("carreg_data_saida_iso")
 

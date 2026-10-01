@@ -5,6 +5,7 @@ import json
 import os
 import re
 import time
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -46,6 +47,7 @@ class SyncResult:
     added: int = 0
     updated: int = 0
     removed: int = 0
+    cleaned_loads: int = 0
     total: int = 0
     synced_at: datetime | None = None
     message: str = ""
@@ -280,7 +282,81 @@ def _fetch_source_routes(url: str) -> list[dict]:
     return routes
 
 
-def _apply_snapshot(routes: list[dict]) -> tuple[int, int, int]:
+def _normalize_route_label(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", _clean_text(value))
+    text = "".join(
+        character for character in text if not unicodedata.combining(character)
+    )
+    text = re.sub(r"\s*[-–—]\s*", " - ", text.upper())
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _cleanup_legacy_loads(cursor, routes: list[dict], from_date: date) -> int:
+    official_by_weekday: dict[int, set[str]] = {weekday: set() for weekday in range(7)}
+    for route in routes:
+        weekday = WEEKDAY_NUMBERS.get(route.get("dia_semana"))
+        if weekday is None:
+            continue
+        label = _clean_text(route.get("rota"))
+        destination = _clean_text(route.get("destino"))
+        if destination:
+            label = f"{label} - {destination}"
+        official_by_weekday[weekday].add(_normalize_route_label(label))
+
+    cursor.execute(
+        """
+        SELECT id, data, rota, placa, motorista_id, ajudante_id, revisado
+        FROM carregamentos
+        WHERE data >= ?;
+        """,
+        (from_date.isoformat(),),
+    )
+    rows = [dict(row) for row in cursor.fetchall()]
+
+    def row_priority(row: dict) -> tuple:
+        filled_score = sum(
+            bool(row.get(field))
+            for field in ("placa", "motorista_id", "ajudante_id", "revisado")
+        )
+        return (
+            row.get("data") or "",
+            _normalize_route_label(row.get("rota")),
+            -filled_score,
+            int(row.get("id") or 0),
+        )
+
+    kept_official: set[tuple[str, str]] = set()
+    delete_ids: list[int] = []
+    for row in sorted(rows, key=row_priority):
+        try:
+            load_date = _parse_date(row.get("data"))
+        except (TypeError, ValueError):
+            continue
+        route_label = _normalize_route_label(row.get("rota"))
+        if route_label not in official_by_weekday.get(load_date.weekday(), set()):
+            delete_ids.append(int(row["id"]))
+            continue
+        key = (load_date.isoformat(), route_label)
+        if key in kept_official:
+            delete_ids.append(int(row["id"]))
+        else:
+            kept_official.add(key)
+
+    if not delete_ids:
+        return 0
+    placeholders = ",".join("?" for _ in delete_ids)
+    values = tuple(delete_ids)
+    cursor.execute(
+        f"DELETE FROM bloqueios WHERE carregamento_id IN ({placeholders});", values
+    )
+    cursor.execute(
+        f"DELETE FROM ajustes_rotas WHERE carregamento_id IN ({placeholders});", values
+    )
+    cursor.execute(f"DELETE FROM carregamentos WHERE id IN ({placeholders});", values)
+    return len(delete_ids)
+
+
+def _apply_snapshot(routes: list[dict]) -> tuple[int, int, int, int]:
     now_iso = datetime.now(timezone.utc).isoformat()
     added = updated = removed = 0
     source_ids = {item["origem_id"] for item in routes}
@@ -361,10 +437,12 @@ def _apply_snapshot(routes: list[dict]) -> tuple[int, int, int]:
             (SOURCE_NAME,),
         )
         removed += max(int(cursor.rowcount or 0), 0)
+        today = datetime.now(timezone(timedelta(hours=-3))).date()
+        cleaned_loads = _cleanup_legacy_loads(cursor, routes, today)
         connection.commit()
     if not db.USE_POSTGRES:
         connection.close()
-    return added, updated, removed
+    return added, updated, removed, cleaned_loads
 
 
 def sync_weekly_routes(force: bool = False) -> SyncResult:
@@ -390,14 +468,15 @@ def sync_weekly_routes(force: bool = False) -> SyncResult:
         ):
             return _LAST_SYNC_RESULT
         routes = _fetch_source_routes(url)
-        added, updated, removed = _apply_snapshot(routes)
+        added, updated, removed, cleaned_loads = _apply_snapshot(routes)
         result = SyncResult(
             configured=True,
             checked=True,
-            changed=bool(added or updated or removed),
+            changed=bool(added or updated or removed or cleaned_loads),
             added=added,
             updated=updated,
             removed=removed,
+            cleaned_loads=cleaned_loads,
             total=len(routes),
             synced_at=datetime.now(timezone.utc),
             message="Rotas sincronizadas com o JR Rotas.",

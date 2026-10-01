@@ -106,13 +106,13 @@ class SnapshotTests(unittest.TestCase):
 
     def test_snapshot_updates_incrementally_without_duplicates(self):
         first = self.route("R.40", "Itaúna", "0:R.40")
-        self.assertEqual(jr_rotas._apply_snapshot([first]), (1, 0, 0))
-        self.assertEqual(jr_rotas._apply_snapshot([first]), (0, 0, 0))
+        self.assertEqual(jr_rotas._apply_snapshot([first]), (1, 0, 0, 0))
+        self.assertEqual(jr_rotas._apply_snapshot([first]), (0, 0, 0, 0))
 
         changed = self.route("R.40", "Itaúna e região", "0:R.40")
         second = self.route("R.41", "Pará de Minas", "0:R.41")
-        self.assertEqual(jr_rotas._apply_snapshot([changed, second]), (1, 1, 0))
-        self.assertEqual(jr_rotas._apply_snapshot([second]), (0, 0, 1))
+        self.assertEqual(jr_rotas._apply_snapshot([changed, second]), (1, 1, 0, 0))
+        self.assertEqual(jr_rotas._apply_snapshot([second]), (0, 0, 1, 0))
 
         with db.get_connection(dict_rows=True) as connection:
             cursor = connection.cursor()
@@ -141,7 +141,7 @@ class SnapshotTests(unittest.TestCase):
         connection.close()
 
         official = self.route("R.40", "Itaúna", "0:R.40")
-        self.assertEqual(jr_rotas._apply_snapshot([official]), (1, 0, 2))
+        self.assertEqual(jr_rotas._apply_snapshot([official]), (1, 0, 2, 0))
 
         with db.get_connection(dict_rows=True) as connection:
             cursor = connection.cursor()
@@ -149,6 +149,43 @@ class SnapshotTests(unittest.TestCase):
             rows = [dict(row) for row in cursor.fetchall()]
         connection.close()
         self.assertEqual(rows, [{"rota": "R.40", "origem": "jr_rotas"}])
+
+    def test_snapshot_cleans_current_legacy_loads_and_official_duplicates(self):
+        with db.get_connection() as connection:
+            cursor = connection.cursor()
+            cursor.executemany(
+                """
+                INSERT INTO carregamentos
+                    (data, data_saida, rota, observacao, revisado)
+                VALUES (?, ?, ?, '0', 0);
+                """,
+                [
+                    ("2026-10-01", "2026-10-02", "40 - ITAÚNA"),
+                    ("2026-10-01", "2026-10-02", "R.40 - ITAÚNA"),
+                    ("2026-10-01", "2026-10-02", "R.40 - ITAÚNA"),
+                    ("2026-09-30", "2026-10-01", "40 - ITAÚNA"),
+                ],
+            )
+            connection.commit()
+        connection.close()
+
+        official = self.route("R.40", "Itaúna", "3:R.40")
+        official["dia_semana"] = "quinta"
+        official["origem_hash"] = jr_rotas._route_hash(official)
+        self.assertEqual(jr_rotas._apply_snapshot([official]), (1, 0, 0, 2))
+
+        with db.get_connection(dict_rows=True) as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT data, rota FROM carregamentos ORDER BY data, id;")
+            rows = [dict(row) for row in cursor.fetchall()]
+        connection.close()
+        self.assertEqual(
+            rows,
+            [
+                {"data": "2026-09-30", "rota": "40 - ITAÚNA"},
+                {"data": "2026-10-01", "rota": "R.40 - ITAÚNA"},
+            ],
+        )
 
 
 if __name__ == "__main__":
