@@ -123,6 +123,33 @@ class SnapshotTests(unittest.TestCase):
             rows, [{"rota": "R.41", "destino": "Pará de Minas", "origem": "jr_rotas"}]
         )
 
+    def test_snapshot_removes_all_old_local_routes(self):
+        with db.get_connection() as connection:
+            cursor = connection.cursor()
+            cursor.executemany(
+                """
+                INSERT INTO rotas_semanais
+                    (dia_semana, rota, destino, observacao, origem)
+                VALUES (?, ?, ?, '', 'local');
+                """,
+                [
+                    ("segunda", "ANTIGA 1", "Destino antigo"),
+                    ("sabado", "ANTIGA 2", "Destino de sábado"),
+                ],
+            )
+            connection.commit()
+        connection.close()
+
+        official = self.route("R.40", "Itaúna", "0:R.40")
+        self.assertEqual(jr_rotas._apply_snapshot([official]), (1, 0, 2))
+
+        with db.get_connection(dict_rows=True) as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT rota, origem FROM rotas_semanais ORDER BY rota;")
+            rows = [dict(row) for row in cursor.fetchall()]
+        connection.close()
+        self.assertEqual(rows, [{"rota": "R.40", "origem": "jr_rotas"}])
+
 
 if __name__ == "__main__":
     unittest.main()

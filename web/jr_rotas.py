@@ -284,7 +284,6 @@ def _apply_snapshot(routes: list[dict]) -> tuple[int, int, int]:
     now_iso = datetime.now(timezone.utc).isoformat()
     added = updated = removed = 0
     source_ids = {item["origem_id"] for item in routes}
-    managed_days = sorted({item["dia_semana"] for item in routes})
 
     with db.get_connection(dict_rows=True) as connection:
         cursor = connection.cursor()
@@ -352,19 +351,16 @@ def _apply_snapshot(routes: list[dict]) -> tuple[int, int, int]:
             )
             removed += len(stale_ids)
 
-        # A origem é oficial: ao ativar a integração, elimina registros locais
-        # dos dias administrados pelo JR Rotas para não manter cópias divergentes.
-        if managed_days:
-            placeholders = ",".join("?" for _ in managed_days)
-            cursor.execute(
-                f"""
-                DELETE FROM rotas_semanais
-                WHERE COALESCE(origem, 'local') <> ?
-                  AND dia_semana IN ({placeholders});
-                """,
-                (SOURCE_NAME, *managed_days),
-            )
-            removed += max(int(cursor.rowcount or 0), 0)
+        # O JR Rotas é a fonte exclusiva. A limpeza acontece somente após a
+        # leitura completa e válida da origem, nunca durante uma falha de rede.
+        cursor.execute(
+            """
+            DELETE FROM rotas_semanais
+            WHERE COALESCE(origem, 'local') <> ?;
+            """,
+            (SOURCE_NAME,),
+        )
+        removed += max(int(cursor.rowcount or 0), 0)
         connection.commit()
     if not db.USE_POSTGRES:
         connection.close()
