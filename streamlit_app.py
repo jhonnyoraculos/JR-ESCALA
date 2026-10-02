@@ -16,6 +16,7 @@ NAV_ITEMS = [
     "Oficinas",
     "Rotas Semanais",
     "Caminhões",
+    "Fretados",
     "Férias",
     "Colaboradores",
     "LOG",
@@ -320,6 +321,7 @@ _EDIT_FORM_PREFIXES = {
     "escala_edit_id": ("escala_form_",),
     "rota_edit_id": ("rotas_form_",),
     "caminhao_edit_id": ("caminhao_form_",),
+    "fretado_caminhao_edit_id": ("fretado_caminhao_form_",),
     "ferias_edit_id": ("ferias_form_",),
 }
 
@@ -382,6 +384,7 @@ def _init_state() -> None:
     st.session_state.setdefault("escala_edit_id", None)
     st.session_state.setdefault("rota_edit_id", None)
     st.session_state.setdefault("caminhao_edit_id", None)
+    st.session_state.setdefault("fretado_caminhao_edit_id", None)
     st.session_state.setdefault("ferias_edit_id", None)
     st.session_state.setdefault("colab_edit_id", None)
 
@@ -408,7 +411,7 @@ def _cache_listar_colaboradores_por_funcao(funcao: str, data_iso: str | None = N
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _cache_listar_caminhoes_ativos() -> list[dict]:
-    return _cache_listar_caminhoes(ativos_only=True)
+    return _cache_listar_caminhoes_gerais(ativos_only=True)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -430,6 +433,21 @@ def _cache_obter_colaborador_por_id(colaborador_id: int | None) -> dict | None:
 @st.cache_data(ttl=300, show_spinner=False)
 def _cache_listar_caminhoes(ativos_only: bool = True) -> list[dict]:
     return svc.listar_caminhoes(ativos_only=ativos_only)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cache_listar_caminhoes_gerais(ativos_only: bool = True) -> list[dict]:
+    return svc.listar_caminhoes_gerais(ativos_only=ativos_only)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cache_listar_fretados_com_caminhoes() -> list[dict]:
+    return svc.listar_fretados_com_caminhoes()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cache_listar_vinculos_fretados() -> dict[int, dict]:
+    return svc.listar_vinculos_fretados()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -496,6 +514,9 @@ def _clear_cached_data() -> None:
         _cache_listar_colaboradores,
         _cache_obter_colaborador_por_id,
         _cache_listar_caminhoes,
+        _cache_listar_caminhoes_gerais,
+        _cache_listar_fretados_com_caminhoes,
+        _cache_listar_vinculos_fretados,
         _cache_listar_folgas,
         _cache_listar_folgas_por_data_saida,
         _cache_listar_ferias,
@@ -512,7 +533,7 @@ def _clear_cached_data() -> None:
 
 
 @st.cache_resource(show_spinner=False)
-def _init_database_once() -> bool:
+def _init_database_with_fretados_once() -> bool:
     init_db()
     svc.sincronizar_colaboradores_20261001()
     return True
@@ -541,7 +562,7 @@ def _database_error_hint(exc: Exception) -> str:
 
 def _init_database_or_stop() -> None:
     try:
-        _init_database_once()
+        _init_database_with_fretados_once()
     except Exception as exc:
         st.error("Não foi possível conectar ao banco de dados.")
         st.warning(_database_error_hint(exc))
@@ -555,7 +576,7 @@ def _init_database_or_stop() -> None:
             "A mensagem técnica completa continua disponível em Manage app → Logs."
         )
         if st.button("Tentar novamente", type="primary"):
-            _init_database_once.clear()
+            _init_database_with_fretados_once.clear()
             st.rerun()
         st.stop()
 
@@ -899,7 +920,29 @@ def page_carregamentos() -> None:
 
     caminhoes_disp = _filtrar_caminhoes()
 
-    with st.form("carreg_form"):
+    motorista_options = [svc.VALOR_SEM_MOTORISTA]
+    motorista_map = {svc.VALOR_SEM_MOTORISTA: None}
+    for mot in motoristas_disp:
+        label = f"{mot.get('nome')} (#{mot.get('id')})"
+        motorista_options.append(label)
+        motorista_map[label] = mot.get("id")
+    motorista_sel = svc.VALOR_SEM_MOTORISTA
+    if edit_item and edit_item.get("motorista_id"):
+        for label, mid in motorista_map.items():
+            if mid == edit_item.get("motorista_id"):
+                motorista_sel = label
+                break
+
+    motorista_key = f"carreg_form_motorista_{form_key_suffix}"
+    placa_key = f"carreg_form_placa_{form_key_suffix}"
+    motorista_atual_label = st.session_state.get(motorista_key, motorista_sel)
+    motorista_atual_id = motorista_map.get(motorista_atual_label)
+    vinculo_fretado = _cache_listar_vinculos_fretados().get(motorista_atual_id)
+    placa_exclusiva = (
+        (vinculo_fretado.get("placa") or "").upper() if vinculo_fretado else ""
+    )
+
+    with st.container(border=True):
         col_a, col_b, col_c = st.columns(3)
         with col_a:
             form_data_iso = st.date_input(
@@ -914,13 +957,23 @@ def page_carregamentos() -> None:
                 key=f"carreg_form_saida_{form_key_suffix}",
             ).isoformat()
         with col_c:
-            placa_default = (edit_item.get("placa") or "") if edit_item else ""
-            placa_options = [svc.VALOR_SEM_CAMINHAO] + caminhoes_disp
+            placa_default = placa_exclusiva or (
+                (edit_item.get("placa") or "") if edit_item else ""
+            )
+            placa_options = (
+                [placa_exclusiva]
+                if placa_exclusiva
+                else [svc.VALOR_SEM_CAMINHAO] + caminhoes_disp
+            )
             placa_index = 0
             if placa_default and placa_default in placa_options:
                 placa_index = placa_options.index(placa_default)
             placa_escolhida = st.selectbox(
-                "Placa", placa_options, index=placa_index, key=f"carreg_form_placa_{form_key_suffix}"
+                "Placa",
+                placa_options,
+                index=placa_index,
+                key=placa_key,
+                disabled=bool(placa_exclusiva),
             )
             placa_valor = None if placa_escolhida == svc.VALOR_SEM_CAMINHAO else placa_escolhida
 
@@ -938,23 +991,13 @@ def page_carregamentos() -> None:
 
         col_g, col_h, col_i = st.columns(3)
         with col_g:
-            motorista_options = [svc.VALOR_SEM_MOTORISTA]
-            motorista_map = {svc.VALOR_SEM_MOTORISTA: None}
-            for mot in motoristas_disp:
-                label = f"{mot.get('nome')} (#{mot.get('id')})"
-                motorista_options.append(label)
-                motorista_map[label] = mot.get("id")
-            motorista_sel = svc.VALOR_SEM_MOTORISTA
-            if edit_item and edit_item.get("motorista_id"):
-                for label, mid in motorista_map.items():
-                    if mid == edit_item.get("motorista_id"):
-                        motorista_sel = label
-                        break
             motorista_escolhido = st.selectbox(
                 "Motorista",
                 motorista_options,
                 index=motorista_options.index(motorista_sel),
-                key=f"carreg_form_motorista_{form_key_suffix}",
+                key=motorista_key,
+                on_change=_clear_widget_state,
+                args=((placa_key,),),
             )
             motorista_id = motorista_map.get(motorista_escolhido)
         with col_h:
@@ -1007,7 +1050,10 @@ def page_carregamentos() -> None:
         with col_k:
             st.write("")
 
-        submit = st.form_submit_button("Atualizar" if edit_item else "Salvar")
+        submit = st.button(
+            "Atualizar" if edit_item else "Salvar",
+            key=f"carreg_form_submit_{form_key_suffix}",
+        )
 
     if submit:
         if not rota_num_valor or not rota_destino_valor:
@@ -1999,7 +2045,7 @@ def page_rotas_semanais() -> None:
 def page_caminhoes() -> None:
     _apply_pending_edit_target("caminhao_edit_id")
     st.subheader("Caminhões")
-    registros = _cache_listar_caminhoes(ativos_only=False)
+    registros = _cache_listar_caminhoes_gerais(ativos_only=False)
 
     edit_id = st.session_state.get("caminhao_edit_id")
     edit_item = None
@@ -2099,6 +2145,168 @@ def page_caminhoes() -> None:
             )
     else:
         st.info("Nenhum caminhão cadastrado.")
+
+
+def page_fretados() -> None:
+    _apply_pending_edit_target("fretado_caminhao_edit_id")
+    st.subheader("Fretados")
+    st.caption(
+        "O caminhão vinculado fica exclusivo do fretado e é selecionado automaticamente "
+        "nos carregamentos."
+    )
+
+    registros = _cache_listar_fretados_com_caminhoes()
+    fretados_ativos = [item for item in registros if item.get("colaborador_ativo")]
+    caminhoes_ativos = _cache_listar_caminhoes(ativos_only=True)
+
+    if fretados_ativos and caminhoes_ativos:
+        fretado_ids = [None] + [int(item["colaborador_id"]) for item in fretados_ativos]
+        fretado_nomes = {
+            int(item["colaborador_id"]): item.get("nome") or "Fretado"
+            for item in fretados_ativos
+        }
+        caminhao_ids = [None] + [int(item["id"]) for item in caminhoes_ativos]
+        caminhao_labels = {
+            int(item["id"]): " - ".join(
+                parte
+                for parte in (item.get("placa") or "", item.get("modelo") or "")
+                if parte
+            )
+            for item in caminhoes_ativos
+        }
+        with st.form("fretado_vinculo_form"):
+            col_a, col_b = st.columns(2)
+            with col_a:
+                colaborador_id = st.selectbox(
+                    "Fretado",
+                    fretado_ids,
+                    format_func=lambda item_id: fretado_nomes.get(item_id, "Selecionar fretado"),
+                    key="fretado_vinculo_colaborador",
+                )
+            with col_b:
+                caminhao_id = st.selectbox(
+                    "Caminhão exclusivo",
+                    caminhao_ids,
+                    format_func=lambda item_id: caminhao_labels.get(item_id, "Selecionar caminhão"),
+                    key="fretado_vinculo_caminhao",
+                )
+            vincular = st.form_submit_button("Salvar vínculo")
+        if vincular:
+            if not colaborador_id or not caminhao_id:
+                _set_flash("error", "Selecione o fretado e o caminhão.")
+            else:
+                try:
+                    svc.vincular_caminhao_fretado(colaborador_id, caminhao_id)
+                    _set_flash("success", "Caminhão exclusivo vinculado ao fretado.")
+                except Exception as exc:
+                    _set_flash("error", f"Erro ao vincular: {exc}")
+            _clear_cached_data()
+            st.rerun()
+    elif not fretados_ativos:
+        st.info("Nenhum fretado ativo cadastrado.")
+    else:
+        st.info("Cadastre um caminhão na aba Caminhões para fazer o vínculo.")
+
+    if not registros:
+        return
+
+    col_sizes = [2.5, 1.2, 1.8, 2.2, 1.2, 2.4]
+    header = st.columns(col_sizes)
+    header[0].markdown('<div class="jr-head">Fretado</div>', unsafe_allow_html=True)
+    header[1].markdown('<div class="jr-head">Placa</div>', unsafe_allow_html=True)
+    header[2].markdown('<div class="jr-head">Modelo</div>', unsafe_allow_html=True)
+    header[3].markdown('<div class="jr-head">Observação</div>', unsafe_allow_html=True)
+    header[4].markdown('<div class="jr-head">Status</div>', unsafe_allow_html=True)
+    header[5].markdown('<div class="jr-head">Ações</div>', unsafe_allow_html=True)
+
+    for item in registros:
+        cols = st.columns(col_sizes)
+        _cell(cols[0], item.get("nome") or "-")
+        _cell(cols[1], item.get("placa") or "Sem vínculo", nowrap=True)
+        _cell(cols[2], item.get("modelo") or "-")
+        _cell(cols[3], item.get("observacao") or "-")
+        status = "Ativo" if item.get("caminhao_ativo") else (
+            "Inativo" if item.get("caminhao_id") else "Sem caminhão"
+        )
+        _cell(cols[4], status, nowrap=True)
+        colaborador_id = int(item["colaborador_id"])
+        caminhao_id = item.get("caminhao_id")
+        action_cols = cols[5].columns(2)
+        action_cols[0].button(
+            "Editar caminhão",
+            key=f"fretado_edit_{colaborador_id}",
+            use_container_width=True,
+            disabled=caminhao_id is None,
+            on_click=_set_edit_target,
+            args=("fretado_caminhao_edit_id", caminhao_id),
+            kwargs={"rerun": False},
+        )
+        action_cols[1].button(
+            "Desvincular",
+            key=f"fretado_unlink_{colaborador_id}",
+            use_container_width=True,
+            disabled=caminhao_id is None,
+            on_click=_request_confirm,
+            args=("fretado_confirm_desvincular", colaborador_id),
+        )
+
+        if st.session_state.get("fretado_caminhao_edit_id") == caminhao_id and caminhao_id:
+            with st.form(f"fretado_caminhao_form_{caminhao_id}"):
+                edit_a, edit_b, edit_c = st.columns(3)
+                with edit_a:
+                    placa = st.text_input(
+                        "Placa",
+                        value=item.get("placa") or "",
+                        key=f"fretado_caminhao_form_placa_{caminhao_id}",
+                    )
+                with edit_b:
+                    modelo = st.text_input(
+                        "Modelo",
+                        value=item.get("modelo") or "",
+                        key=f"fretado_caminhao_form_modelo_{caminhao_id}",
+                    )
+                with edit_c:
+                    observacao = st.text_input(
+                        "Observação",
+                        value=item.get("observacao") or "",
+                        key=f"fretado_caminhao_form_obs_{caminhao_id}",
+                    )
+                ativo = st.checkbox(
+                    "Ativo",
+                    value=bool(item.get("caminhao_ativo")),
+                    key=f"fretado_caminhao_form_ativo_{caminhao_id}",
+                )
+                save_col, cancel_col = st.columns(2)
+                atualizar = save_col.form_submit_button("Salvar", use_container_width=True)
+                cancelar = cancel_col.form_submit_button("Cancelar", use_container_width=True)
+            if atualizar:
+                try:
+                    svc.editar_caminhao(caminhao_id, placa, modelo, observacao, ativo)
+                    _set_flash("success", "Caminhão do fretado atualizado.")
+                except Exception as exc:
+                    _set_flash("error", f"Erro ao atualizar: {exc}")
+                _set_edit_target("fretado_caminhao_edit_id", None, rerun=False)
+                _clear_cached_data()
+                st.rerun()
+            if cancelar:
+                _set_edit_target("fretado_caminhao_edit_id", None, rerun=False)
+                st.rerun()
+
+        if st.session_state.get("fretado_confirm_desvincular") == colaborador_id:
+            st.warning(f"Desvincular o caminhão de **{item.get('nome') or 'este fretado'}**?")
+            confirm_col, cancel_col, _ = st.columns([1, 1, 4])
+            if confirm_col.button("Confirmar", key=f"fretado_unlink_yes_{colaborador_id}"):
+                try:
+                    svc.desvincular_caminhao_fretado(colaborador_id)
+                    _set_flash("success", "Caminhão desvinculado.")
+                except Exception as exc:
+                    _set_flash("error", f"Erro ao desvincular: {exc}")
+                st.session_state.pop("fretado_confirm_desvincular", None)
+                _clear_cached_data()
+                st.rerun()
+            if cancel_col.button("Cancelar", key=f"fretado_unlink_no_{colaborador_id}"):
+                st.session_state.pop("fretado_confirm_desvincular", None)
+                st.rerun()
 
 
 def page_ferias() -> None:
@@ -2248,7 +2456,11 @@ def page_ferias() -> None:
 
 def page_colaboradores() -> None:
     st.subheader("Colaboradores")
-    registros = _cache_listar_colaboradores(ativos_only=False)
+    registros = [
+        item
+        for item in _cache_listar_colaboradores(ativos_only=False)
+        if "FRETADO" not in (item.get("nome") or "").upper()
+    ]
     if st.session_state.pop("colab_reset_create_form", False):
         _clear_widget_state(("colab_new_",))
 
@@ -2730,6 +2942,8 @@ def _render_navigation() -> None:
             page_rotas_semanais()
         elif pagina == "Caminhões":
             page_caminhoes()
+        elif pagina == "Fretados":
+            page_fretados()
         elif pagina == "Férias":
             page_ferias()
         elif pagina == "Colaboradores":

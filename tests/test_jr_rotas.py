@@ -1,7 +1,7 @@
 import json
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -176,6 +176,10 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(rows, [{"rota": "R.40", "origem": "jr_rotas"}])
 
     def test_snapshot_cleans_current_legacy_loads_and_official_duplicates(self):
+        today = date.today()
+        target_date = today + timedelta(days=(3 - today.weekday()) % 7)
+        departure_date = target_date + timedelta(days=1)
+        historical_date = today - timedelta(days=1)
         with db.get_connection() as connection:
             cursor = connection.cursor()
             cursor.executemany(
@@ -185,10 +189,10 @@ class SnapshotTests(unittest.TestCase):
                 VALUES (?, ?, ?, '0', 0);
                 """,
                 [
-                    ("2026-10-01", "2026-10-02", "40 - ITAÚNA"),
-                    ("2026-10-01", "2026-10-02", "R.40 - ITAÚNA"),
-                    ("2026-10-01", "2026-10-02", "R.40 - ITAÚNA"),
-                    ("2026-09-30", "2026-10-01", "40 - ITAÚNA"),
+                    (target_date.isoformat(), departure_date.isoformat(), "40 - ITAÚNA"),
+                    (target_date.isoformat(), departure_date.isoformat(), "R.40 - ITAÚNA"),
+                    (target_date.isoformat(), departure_date.isoformat(), "R.40 - ITAÚNA"),
+                    (historical_date.isoformat(), target_date.isoformat(), "40 - ITAÚNA"),
                 ],
             )
             connection.commit()
@@ -207,12 +211,15 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(
             rows,
             [
-                {"data": "2026-09-30", "rota": "40 - ITAÚNA"},
-                {"data": "2026-10-01", "rota": "R.40 - ITAÚNA"},
+                {"data": historical_date.isoformat(), "rota": "40 - ITAÚNA"},
+                {"data": target_date.isoformat(), "rota": "R.40 - ITAÚNA"},
             ],
         )
 
     def test_snapshot_renames_changed_destination_without_losing_assignment(self):
+        today = date.today()
+        target_date = today + timedelta(days=(3 - today.weekday()) % 7)
+        departure_date = target_date + timedelta(days=1)
         with db.get_connection() as connection:
             cursor = connection.cursor()
             cursor.execute(
@@ -222,8 +229,8 @@ class SnapshotTests(unittest.TestCase):
                 VALUES (?, ?, ?, ?, '0', 1);
                 """,
                 (
-                    "2026-10-01",
-                    "2026-10-02",
+                    target_date.isoformat(),
+                    departure_date.isoformat(),
                     "R.600 - SANTA LUZIA",
                     "ABC-1D23",
                 ),

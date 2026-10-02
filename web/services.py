@@ -500,6 +500,7 @@ def _normalizar_nome_colaborador(nome: str | None) -> str:
 
 
 def _excluir_colaborador_com_cursor(cur, colaborador_id: int) -> None:
+    cur.execute("DELETE FROM fretados_caminhoes WHERE colaborador_id = ?;", (colaborador_id,))
     cur.execute("DELETE FROM folgas WHERE colaborador_id = ?;", (colaborador_id,))
     cur.execute("DELETE FROM ferias WHERE colaborador_id = ?;", (colaborador_id,))
     cur.execute("DELETE FROM bloqueios WHERE colaborador_id = ?;", (colaborador_id,))
@@ -674,6 +675,7 @@ def excluir_colaborador(colaborador_id: int) -> str | None:
         cur.execute("SELECT foto FROM colaboradores WHERE id = ?;", (colaborador_id,))
         row = cur.fetchone()
         foto = row["foto"] if row else None
+        cur.execute("DELETE FROM fretados_caminhoes WHERE colaborador_id = ?;", (colaborador_id,))
         cur.execute("DELETE FROM folgas WHERE colaborador_id = ?;", (colaborador_id,))
         cur.execute("DELETE FROM ferias WHERE colaborador_id = ?;", (colaborador_id,))
         cur.execute("DELETE FROM bloqueios WHERE colaborador_id = ?;", (colaborador_id,))
@@ -867,12 +869,144 @@ def editar_caminhao(caminhao_id: int, placa: str, modelo: str, observacao: str, 
 def remover_caminhao(caminhao_id: int) -> None:
     with get_connection() as conn:
         cur = conn.cursor()
+        cur.execute("DELETE FROM fretados_caminhoes WHERE caminhao_id = ?;", (caminhao_id,))
         cur.execute("DELETE FROM caminhoes WHERE id = ?;", (caminhao_id,))
         conn.commit()
 
 
 def listar_caminhoes_ativos() -> list[dict]:
     return listar_caminhoes(ativos_only=True)
+
+
+def listar_fretados_com_caminhoes() -> list[dict]:
+    with get_connection(dict_rows=True) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT col.id AS colaborador_id,
+                   col.nome,
+                   col.ativo AS colaborador_ativo,
+                   cam.id AS caminhao_id,
+                   cam.placa,
+                   cam.modelo,
+                   cam.observacao,
+                   cam.ativo AS caminhao_ativo
+            FROM colaboradores col
+            LEFT JOIN fretados_caminhoes fc ON fc.colaborador_id = col.id
+            LEFT JOIN caminhoes cam ON cam.id = fc.caminhao_id
+            WHERE UPPER(col.nome) LIKE '%FRETADO%'
+            ORDER BY col.nome;
+            """
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def listar_caminhoes_gerais(ativos_only: bool = True) -> list[dict]:
+    with get_connection(dict_rows=True) as conn:
+        cur = conn.cursor()
+        filtro = "AND cam.ativo = 1" if ativos_only else ""
+        cur.execute(
+            f"""
+            SELECT cam.id, cam.placa, cam.modelo, cam.observacao, cam.ativo
+            FROM caminhoes cam
+            LEFT JOIN fretados_caminhoes fc ON fc.caminhao_id = cam.id
+            WHERE fc.caminhao_id IS NULL {filtro}
+            ORDER BY cam.ativo DESC, cam.placa;
+            """
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def listar_vinculos_fretados() -> dict[int, dict]:
+    return {
+        int(item["colaborador_id"]): item
+        for item in listar_fretados_com_caminhoes()
+        if item.get("caminhao_id") is not None
+    }
+
+
+def vincular_caminhao_fretado(colaborador_id: int, caminhao_id: int) -> None:
+    with get_connection(dict_rows=True) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT nome FROM colaboradores WHERE id = ? AND ativo = 1;",
+            (colaborador_id,),
+        )
+        colaborador = cur.fetchone()
+        if not colaborador or "FRETADO" not in _normalizar_nome_colaborador(colaborador["nome"]):
+            raise ValueError("Selecione um fretado ativo.")
+        cur.execute("SELECT id FROM caminhoes WHERE id = ? AND ativo = 1;", (caminhao_id,))
+        if not cur.fetchone():
+            raise ValueError("Selecione um caminhão ativo.")
+        cur.execute(
+            "SELECT colaborador_id FROM fretados_caminhoes WHERE caminhao_id = ? AND colaborador_id <> ?;",
+            (caminhao_id, colaborador_id),
+        )
+        if cur.fetchone():
+            raise ValueError("Este caminhão já pertence a outro fretado.")
+        cur.execute(
+            """
+            INSERT INTO fretados_caminhoes (colaborador_id, caminhao_id)
+            VALUES (?, ?)
+            ON CONFLICT (colaborador_id) DO UPDATE SET caminhao_id = excluded.caminhao_id;
+            """,
+            (colaborador_id, caminhao_id),
+        )
+        conn.commit()
+
+
+def desvincular_caminhao_fretado(colaborador_id: int) -> None:
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM fretados_caminhoes WHERE colaborador_id = ?;",
+            (colaborador_id,),
+        )
+        conn.commit()
+
+
+def obter_caminhao_fretado(colaborador_id: int | None) -> dict | None:
+    if not colaborador_id:
+        return None
+    with get_connection(dict_rows=True) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT cam.id, cam.placa, cam.modelo, cam.observacao, cam.ativo
+            FROM fretados_caminhoes fc
+            JOIN caminhoes cam ON cam.id = fc.caminhao_id
+            WHERE fc.colaborador_id = ?;
+            """,
+            (colaborador_id,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def resolver_placa_exclusiva(motorista_id: int | None, placa: str | None) -> str | None:
+    placa_db = placa.strip().upper() if placa else None
+    caminhao_fretado = obter_caminhao_fretado(motorista_id)
+    if caminhao_fretado:
+        if not caminhao_fretado.get("ativo"):
+            raise ValueError("O caminhão exclusivo deste fretado está inativo.")
+        return (caminhao_fretado.get("placa") or "").strip().upper() or None
+    if not placa_db:
+        return None
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT 1
+            FROM fretados_caminhoes fc
+            JOIN caminhoes cam ON cam.id = fc.caminhao_id
+            WHERE UPPER(cam.placa) = ?
+            LIMIT 1;
+            """,
+            (placa_db,),
+        )
+        if cur.fetchone():
+            raise ValueError("Este caminhão é exclusivo de outro fretado.")
+    return placa_db
 
 
 def placa_em_manutencao(placa: str, data_iso: str) -> bool:
@@ -1177,7 +1311,7 @@ def salvar_carregamento(
     if motorista_id and ajudante_id and motorista_id == ajudante_id:
         raise ValueError("Motorista e ajudante devem ser pessoas diferentes.")
 
-    placa_db = placa.strip().upper() if placa else None
+    placa_db = resolver_placa_exclusiva(motorista_id, placa)
     observacao_db = observacao.strip() if observacao else None
     observacao_extra_db = observacao_extra.strip() if observacao_extra else None
     observacao_cor_db = observacao_cor.strip() if observacao_cor else None
@@ -1241,7 +1375,7 @@ def atualizar_carregamento(
     if motorista_id and ajudante_id and motorista_id == ajudante_id:
         raise ValueError("Motorista e ajudante devem ser pessoas diferentes.")
 
-    placa_db = placa.strip().upper() if placa else None
+    placa_db = resolver_placa_exclusiva(motorista_id, placa)
     observacao_db = observacao.strip() if observacao else None
     observacao_extra_db = observacao_extra.strip() if observacao_extra else None
     observacao_cor_db = observacao_cor.strip() if observacao_cor else None
@@ -1422,13 +1556,16 @@ def salvar_oficina(
     data_saida: str | None = None,
     observacao_cor: str | None = None,
 ) -> int:
+    placa_db = resolver_placa_exclusiva(motorista_id, placa)
+    if not placa_db:
+        raise ValueError("Informe a placa.")
     disponibilidade = verificar_disponibilidade(data_iso)
     indis_colaboradores = disponibilidade.get("motoristas", set()).union(
         disponibilidade.get("ajudantes", set())
     )
     if motorista_id and motorista_id in indis_colaboradores:
         raise ValueError("Motorista indisponível nesta data.")
-    if placa and placa.upper() in disponibilidade.get("caminhoes", set()):
+    if placa_db in disponibilidade.get("caminhoes", set()):
         raise ValueError("Caminhão indisponível nesta data.")
 
     data_saida_iso = data_saida or calcular_data_saida_padrao(data_iso)
@@ -1451,7 +1588,7 @@ def salvar_oficina(
             (
                 data_iso,
                 motorista_id,
-                placa,
+                placa_db,
                 observacao,
                 (observacao_extra or "").strip() or None,
                 data_saida_iso,
@@ -1536,6 +1673,9 @@ def editar_oficina(
     data_saida: str | None = None,
     observacao_cor: str | None = None,
 ) -> None:
+    placa_db = resolver_placa_exclusiva(motorista_id, placa)
+    if not placa_db:
+        raise ValueError("Informe a placa.")
     disponibilidade = verificar_disponibilidade(
         data_iso, {"oficina_id": oficina_id}
     )
@@ -1544,7 +1684,7 @@ def editar_oficina(
     )
     if motorista_id and motorista_id in indis_colaboradores:
         raise ValueError("Motorista indisponível nesta data.")
-    if placa and placa.upper() in disponibilidade.get("caminhoes", set()):
+    if placa_db in disponibilidade.get("caminhoes", set()):
         raise ValueError("Caminhão indisponível nesta data.")
     data_saida_iso = data_saida or None
     with get_connection() as conn:
@@ -1558,7 +1698,7 @@ def editar_oficina(
             (
                 data_iso,
                 motorista_id,
-                placa,
+                placa_db,
                 observacao,
                 (observacao_extra or "").strip() or None,
                 data_saida_iso,

@@ -344,7 +344,8 @@ def _postgres_schema_is_current(cur) -> bool:
                 WHERE table_schema = current_schema()
                   AND table_name = 'rotas_semanais'
                   AND column_name = 'origem_id'
-            );
+            )
+            AND to_regclass('fretados_caminhoes') IS NOT NULL;
         """
     )
     row = cur.fetchone()
@@ -437,6 +438,14 @@ def init_db() -> None:
                     modelo TEXT,
                     observacao TEXT,
                     ativo INTEGER NOT NULL DEFAULT 1
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS fretados_caminhoes (
+                    colaborador_id INTEGER PRIMARY KEY REFERENCES colaboradores(id) ON DELETE CASCADE,
+                    caminhao_id INTEGER UNIQUE NOT NULL REFERENCES caminhoes(id) ON DELETE CASCADE
                 );
                 """
             )
@@ -618,6 +627,16 @@ def init_db() -> None:
                 modelo TEXT,
                 observacao TEXT,
                 ativo INTEGER NOT NULL DEFAULT 1
+            );
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fretados_caminhoes (
+                colaborador_id INTEGER PRIMARY KEY,
+                caminhao_id INTEGER UNIQUE NOT NULL,
+                FOREIGN KEY(colaborador_id) REFERENCES colaboradores(id) ON DELETE CASCADE,
+                FOREIGN KEY(caminhao_id) REFERENCES caminhoes(id) ON DELETE CASCADE
             );
             """
         )

@@ -138,6 +138,52 @@ class ServiceCrudTests(unittest.TestCase):
         self.assertEqual(carregamento["motorista_id"], self.motorista)
         self.assertIsNone(carregamento["ajudante_id"])
 
+    def test_fretado_uses_exclusive_truck_automatically(self):
+        fretado_id = services.add_colaborador("FRETADO (TESTE)", "Motorista")
+        outro_fretado_id = services.add_colaborador("FRETADO (OUTRO)", "Motorista")
+        exclusivo_id = services.add_caminhao("FRT-1A23", "Fretado", "Exclusivo")
+        geral_id = services.add_caminhao("GER-4B56", "Geral", "")
+
+        services.vincular_caminhao_fretado(fretado_id, exclusivo_id)
+        vinculo = services.obter_caminhao_fretado(fretado_id)
+        self.assertEqual(vinculo["placa"], "FRT-1A23")
+        self.assertEqual(
+            [item["id"] for item in services.listar_caminhoes_gerais()],
+            [geral_id],
+        )
+
+        carregamento_id = services.salvar_carregamento(
+            "2026-10-01",
+            "R.997 - FRETADO",
+            "GER-4B56",
+            fretado_id,
+            None,
+            "0",
+        )
+        self.assertEqual(
+            services.obter_carregamento(carregamento_id)["placa"],
+            "FRT-1A23",
+        )
+
+        with self.assertRaisesRegex(ValueError, "exclusivo"):
+            services.salvar_carregamento(
+                "2026-10-01",
+                "R.996 - MOTORISTA",
+                "FRT-1A23",
+                self.motorista,
+                None,
+                "0",
+            )
+        with self.assertRaisesRegex(ValueError, "outro fretado"):
+            services.vincular_caminhao_fretado(outro_fretado_id, exclusivo_id)
+
+        services.desvincular_caminhao_fretado(fretado_id)
+        self.assertIsNone(services.obter_caminhao_fretado(fretado_id))
+        self.assertEqual(
+            {item["id"] for item in services.listar_caminhoes_gerais()},
+            {exclusivo_id, geral_id},
+        )
+
     def test_oficina_edit_persists_changed_date_and_delete(self):
         oficina_id = services.salvar_oficina(
             "2026-10-01",
