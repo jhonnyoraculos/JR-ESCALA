@@ -327,7 +327,7 @@ def gerar_relatorio_moderno(
     highlight_colors = highlight_colors or []
 
     largura = 1920
-    header_altura = 140
+    header_altura = 220
     rodape_altura = 40
     margem = 40
     table_header_altura = 48
@@ -335,9 +335,9 @@ def gerar_relatorio_moderno(
     table_width = largura - 2 * margem
     col_px = [int(table_width * proporcao) for proporcao in col_widths]
 
-    font_titulo = carregar_fonte(29, bold=True)
-    font_info = carregar_fonte(21, bold=True)
-    font_info_secundario = carregar_fonte(19, bold=True)
+    font_titulo = carregar_fonte(42, bold=True)
+    font_info = carregar_fonte(31, bold=True)
+    font_info_secundario = carregar_fonte(28, bold=True)
     font_header_table = carregar_fonte(18, bold=True)
     font_table = carregar_fonte(16, bold=True)
     font_footer = carregar_fonte(13, bold=True)
@@ -395,34 +395,34 @@ def gerar_relatorio_moderno(
     grad = criar_gradiente_horizontal(largura, header_altura, COR_AZUL, COR_AZUL_GRADIENTE_FIM)
     imagem.paste(grad, (0, 0))
 
-    logo_pos = (margem, 35)
+    logo_pos = (margem, 50)
     if LOGO_PATH.exists():
         try:
             with Image.open(LOGO_PATH) as logo_img:
-                logo_rel = logo_img.convert("RGBA").resize((80, 80))
+                logo_rel = logo_img.convert("RGBA").resize((116, 116))
             imagem.paste(logo_rel, logo_pos, logo_rel)
         except OSError:
-            draw.text((logo_pos[0], logo_pos[1] + 20), "JR", fill="#FFFFFF", font=font_titulo)
+            draw.text((logo_pos[0], logo_pos[1] + 28), "JR", fill="#FFFFFF", font=font_titulo)
     else:
-        draw.text((logo_pos[0], logo_pos[1] + 20), "JR", fill="#FFFFFF", font=font_titulo)
+        draw.text((logo_pos[0], logo_pos[1] + 28), "JR", fill="#FFFFFF", font=font_titulo)
 
-    titulo_x = logo_pos[0] + 110
-    draw.text((titulo_x, 32), titulo_header, fill="#FFFFFF", font=font_titulo)
+    titulo_x = logo_pos[0] + 150
+    draw.text((titulo_x, 27), titulo_header, fill="#FFFFFF", font=font_titulo)
 
     label_principal = (linha_principal_rotulo or "Informação").strip().upper()
     texto_principal = f"{label_principal}: {data_iso_para_extenso(data_principal_iso)}"
-    draw.text((titulo_x, 70), texto_principal, fill="#FFFFFF", font=font_info)
+    draw.text((titulo_x, 88), texto_principal, fill="#FFFFFF", font=font_info)
 
     if linha_secundaria_rotulo:
         label_secundario = linha_secundaria_rotulo.strip().upper()
         texto_secundario = f"{label_secundario}: {data_iso_para_extenso(data_secundaria_iso or data_principal_iso)}"
-        draw.text((titulo_x, 98), texto_secundario, fill="#FFFFFF", font=font_info)
+        draw.text((titulo_x, 134), texto_secundario, fill="#FFFFFF", font=font_info)
 
     if total_legenda:
         texto_total = total_legenda
         texto_total_w, _ = medir_texto(draw, texto_total, font_info_secundario)
         draw.text(
-            (largura - margem - texto_total_w, header_altura - 30),
+            (largura - margem - texto_total_w, header_altura - 43),
             texto_total,
             fill="#E8EEF8",
             font=font_info_secundario,
