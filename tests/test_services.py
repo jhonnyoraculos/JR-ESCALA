@@ -184,6 +184,32 @@ class ServiceCrudTests(unittest.TestCase):
             {exclusivo_id, geral_id},
         )
 
+    def test_add_fretado_with_optional_exclusive_truck(self):
+        fretado_id, caminhao_id = services.adicionar_fretado(
+            "Transportes Silva",
+            "frt-9z99",
+            "Mercedes 709",
+            "Uso exclusivo",
+        )
+
+        fretado = services.obter_colaborador_por_id(fretado_id)
+        self.assertEqual(fretado["nome"], "FRETADO (TRANSPORTES SILVA)")
+        self.assertEqual(fretado["funcao"], "Motorista")
+        vinculo = services.obter_caminhao_fretado(fretado_id)
+        self.assertEqual(vinculo["id"], caminhao_id)
+        self.assertEqual(vinculo["placa"], "FRT-9Z99")
+        self.assertNotIn(
+            caminhao_id,
+            [item["id"] for item in services.listar_caminhoes_gerais()],
+        )
+
+        sem_caminhao_id, sem_caminhao = services.adicionar_fretado("Novo parceiro")
+        self.assertIsNone(sem_caminhao)
+        self.assertIsNone(services.obter_caminhao_fretado(sem_caminhao_id))
+
+        with self.assertRaisesRegex(ValueError, "já está cadastrado"):
+            services.adicionar_fretado("transportes  silva")
+
     def test_oficina_edit_persists_changed_date_and_delete(self):
         oficina_id = services.salvar_oficina(
             "2026-10-01",

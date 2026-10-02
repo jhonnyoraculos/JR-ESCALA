@@ -611,6 +611,65 @@ def add_colaborador(nome: str, funcao: str, observacao: str = "", foto: str | No
         return novo_id
 
 
+def adicionar_fretado(
+    nome: str,
+    placa: str = "",
+    modelo: str = "",
+    observacao_caminhao: str = "",
+) -> tuple[int, int | None]:
+    nome_limpo = " ".join((nome or "").strip().split())
+    if not nome_limpo:
+        raise ValueError("Informe o nome do fretado.")
+
+    placa_db = (placa or "").strip().upper()
+    if not placa_db and ((modelo or "").strip() or (observacao_caminhao or "").strip()):
+        raise ValueError("Informe a placa para cadastrar os dados do caminhão.")
+
+    nome_normalizado = _normalizar_nome_colaborador(nome_limpo)
+    nome_db = nome_limpo.upper()
+    if "FRETADO" not in nome_normalizado:
+        nome_db = f"FRETADO ({nome_db})"
+    nome_normalizado = _normalizar_nome_colaborador(nome_db)
+
+    with get_connection(dict_rows=True) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT nome FROM colaboradores;")
+        if any(
+            _normalizar_nome_colaborador(row["nome"]) == nome_normalizado
+            for row in cur.fetchall()
+        ):
+            raise ValueError("Este fretado já está cadastrado.")
+
+        if placa_db:
+            cur.execute("SELECT id FROM caminhoes WHERE UPPER(placa) = ?;", (placa_db,))
+            if cur.fetchone():
+                raise ValueError(
+                    "Esta placa já está cadastrada. Use a opção de vincular caminhão existente."
+                )
+
+        colaborador_id = insert_and_get_id(
+            cur,
+            """
+            INSERT INTO colaboradores (nome, funcao, observacao, foto, ativo)
+            VALUES (?, 'Motorista', '', '', 1);
+            """,
+            (nome_db,),
+        )
+        caminhao_id = None
+        if placa_db:
+            caminhao_id = insert_and_get_id(
+                cur,
+                "INSERT INTO caminhoes (placa, modelo, observacao, ativo) VALUES (?, ?, ?, 1);",
+                (placa_db, (modelo or "").strip(), (observacao_caminhao or "").strip()),
+            )
+            cur.execute(
+                "INSERT INTO fretados_caminhoes (colaborador_id, caminhao_id) VALUES (?, ?);",
+                (colaborador_id, caminhao_id),
+            )
+        conn.commit()
+        return int(colaborador_id), int(caminhao_id) if caminhao_id is not None else None
+
+
 def listar_colaboradores(ativos_only: bool = False) -> list[dict]:
     with get_connection(dict_rows=True) as conn:
         cur = conn.cursor()

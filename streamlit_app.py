@@ -2212,10 +2212,52 @@ def page_fretados() -> None:
         "nos carregamentos."
     )
 
+    if st.session_state.pop("fretado_reset_create_form", False):
+        _clear_widget_state(("fretado_new_",))
+
+    st.markdown("#### Adicionar fretado")
+    with st.form("fretado_create_form"):
+        create_a, create_b = st.columns(2)
+        with create_a:
+            novo_nome = st.text_input("Nome do fretado", key="fretado_new_nome")
+        with create_b:
+            nova_placa = st.text_input(
+                "Placa do caminhão exclusivo (opcional)",
+                key="fretado_new_placa",
+            )
+        create_c, create_d = st.columns(2)
+        with create_c:
+            novo_modelo = st.text_input("Modelo do caminhão", key="fretado_new_modelo")
+        with create_d:
+            nova_observacao = st.text_input(
+                "Observação do caminhão",
+                key="fretado_new_observacao",
+            )
+        criar_fretado = st.form_submit_button("Adicionar fretado")
+
+    if criar_fretado:
+        try:
+            _, caminhao_criado_id = svc.adicionar_fretado(
+                novo_nome,
+                nova_placa,
+                novo_modelo,
+                nova_observacao,
+            )
+            mensagem = "Fretado e caminhão exclusivo adicionados." if caminhao_criado_id else (
+                "Fretado adicionado. Agora selecione um caminhão existente para vinculá-lo."
+            )
+            _set_flash("success", mensagem)
+            st.session_state["fretado_reset_create_form"] = True
+        except Exception as exc:
+            _set_flash("error", f"Erro ao adicionar fretado: {exc}")
+        _clear_cached_data()
+        st.rerun()
+
     registros = _cache_listar_fretados_com_caminhoes()
     fretados_ativos = [item for item in registros if item.get("colaborador_ativo")]
     caminhoes_ativos = _cache_listar_caminhoes(ativos_only=True)
 
+    st.markdown("#### Vincular caminhão existente")
     if fretados_ativos and caminhoes_ativos:
         fretado_ids = [None] + [int(item["colaborador_id"]) for item in fretados_ativos]
         fretado_nomes = {
