@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from datetime import date, timedelta
 import html
+import json
 from pathlib import Path
 
 import streamlit as st
@@ -367,6 +368,58 @@ def _cell(container, value: object, nowrap: bool = False, extra_class: str = "")
     container.markdown(
         f'<div class="{classe}">{html.escape(texto)}</div>',
         unsafe_allow_html=True,
+    )
+
+
+def _render_generated_download(
+    state_key: str,
+    widget_key: str,
+    *,
+    label: str = "Baixar relatório",
+    mime: str = "image/png",
+    auto_download: bool = False,
+) -> None:
+    path_value = st.session_state.get(state_key)
+    caminho = Path(path_value) if path_value else None
+    if not caminho or not caminho.exists():
+        st.session_state.pop(state_key, None)
+        return
+
+    file_bytes = caminho.read_bytes()
+    st.download_button(
+        label,
+        data=file_bytes,
+        file_name=caminho.name,
+        mime=mime,
+        key=widget_key,
+    )
+    if not auto_download:
+        return
+
+    file_base64_js = json.dumps(base64.b64encode(file_bytes).decode("ascii"))
+    filename_js = json.dumps(caminho.name)
+    mime_js = json.dumps(mime)
+    import streamlit.components.v1 as components
+
+    components.html(
+        f"""
+        <script>
+        (() => {{
+          const binario = window.atob({file_base64_js});
+          const bytes = new Uint8Array(binario.length);
+          for (let indice = 0; indice < binario.length; indice++) {{
+            bytes[indice] = binario.charCodeAt(indice);
+          }}
+          const url = URL.createObjectURL(new Blob([bytes], {{ type: {mime_js} }}));
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = {filename_js};
+          link.click();
+          window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }})();
+        </script>
+        """,
+        height=0,
     )
 
 
@@ -746,6 +799,7 @@ def page_carregamentos() -> None:
             args=("carreg_confirm_limpar",),
         )
     with action_cols[2]:
+        auto_download = False
         if st.button("Gerar relatório", key="carreg_relatorio"):
             from web.reports import _linha_relatorio_carregamento, desenhar_relatorio_carregamentos
 
@@ -759,13 +813,13 @@ def page_carregamentos() -> None:
                 data_iso, data_saida_iso, linhas, len(registros), cores_obs
             )
             if caminho.exists():
-                st.download_button(
-                    "Baixar relatório",
-                    data=caminho.read_bytes(),
-                    file_name=caminho.name,
-                    mime="image/png",
-                    key="carreg_relatorio_download",
-                )
+                st.session_state["carreg_relatorio_path"] = str(caminho)
+                auto_download = True
+        _render_generated_download(
+            "carreg_relatorio_path",
+            "carreg_relatorio_download",
+            auto_download=auto_download,
+        )
 
     st.markdown("### Carregamentos do dia")
     form_key_bases = [
@@ -1246,6 +1300,7 @@ def page_oficinas() -> None:
     motoristas = _cache_listar_colaboradores_por_funcao("Motorista")
     caminhoes = _cache_listar_caminhoes_ativos()
 
+    auto_download = False
     if st.button("Gerar relatório", key="oficina_relatorio"):
         from web.reports import gerar_relatorio_oficinas
 
@@ -1253,13 +1308,13 @@ def page_oficinas() -> None:
         reg_saida = _cache_listar_oficinas_por_data_saida(data_ref)
         caminho = gerar_relatorio_oficinas(data_iso, data_saida_iso, reg_saida)
         if caminho.exists():
-            st.download_button(
-                "Baixar relatório",
-                data=caminho.read_bytes(),
-                file_name=caminho.name,
-                mime="image/png",
-                key="oficina_relatorio_download",
-            )
+            st.session_state["oficina_relatorio_path"] = str(caminho)
+            auto_download = True
+    _render_generated_download(
+        "oficina_relatorio_path",
+        "oficina_relatorio_download",
+        auto_download=auto_download,
+    )
 
     if st.session_state.get("oficina_confirm_excluir") is not None:
         excluir_id = st.session_state.get("oficina_confirm_excluir")
@@ -1470,6 +1525,7 @@ def page_folgas() -> None:
     edit_id = st.session_state.get("folga_edit_id")
     disponibilidade = _cache_disponibilidade(data_iso, (("folga_id", edit_id),) if edit_id else ())
 
+    auto_download = False
     if st.button("Gerar relatório", key="folga_relatorio"):
         from web.reports import gerar_relatorio_folgas
 
@@ -1477,13 +1533,13 @@ def page_folgas() -> None:
         reg_saida = _cache_listar_folgas_por_data_saida(data_ref)
         caminho = gerar_relatorio_folgas(data_iso, data_saida_iso, reg_saida)
         if caminho.exists():
-            st.download_button(
-                "Baixar relatório",
-                data=caminho.read_bytes(),
-                file_name=caminho.name,
-                mime="image/png",
-                key="folga_relatorio_download",
-            )
+            st.session_state["folga_relatorio_path"] = str(caminho)
+            auto_download = True
+    _render_generated_download(
+        "folga_relatorio_path",
+        "folga_relatorio_download",
+        auto_download=auto_download,
+    )
 
     if st.session_state.get("folga_confirm_excluir") is not None:
         excluir_id = st.session_state.get("folga_confirm_excluir")
@@ -1656,18 +1712,19 @@ def page_escala_cd() -> None:
         if m.get("id") not in ajudantes_ids
     ]
 
+    auto_download = False
     if st.button("Gerar relatório", key="escala_relatorio"):
         from web.reports import gerar_relatorio_escala_cd
 
         caminho = gerar_relatorio_escala_cd(data_iso, data_saida_iso, registros)
         if caminho.exists():
-            st.download_button(
-                "Baixar relatório",
-                data=caminho.read_bytes(),
-                file_name=caminho.name,
-                mime="image/png",
-                key="escala_relatorio_download",
-            )
+            st.session_state["escala_relatorio_path"] = str(caminho)
+            auto_download = True
+    _render_generated_download(
+        "escala_relatorio_path",
+        "escala_relatorio_download",
+        auto_download=auto_download,
+    )
 
     if st.session_state.get("escala_confirm_excluir") is not None:
         excluir_id = st.session_state.get("escala_confirm_excluir")
@@ -2718,18 +2775,21 @@ def page_log() -> None:
             _clear_cached_data()
             st.rerun()
 
+    auto_download = False
     if st.button("Exportar Excel", key="log_exportar"):
         from web.reports import exportar_log_para_excel
 
         caminho = exportar_log_para_excel(registros)
         if caminho.exists():
-            st.download_button(
-                "Baixar Excel",
-                data=caminho.read_bytes(),
-                file_name=caminho.name,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="log_exportar_download",
-            )
+            st.session_state["log_exportar_path"] = str(caminho)
+            auto_download = True
+    _render_generated_download(
+        "log_exportar_path",
+        "log_exportar_download",
+        label="Baixar Excel",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        auto_download=auto_download,
+    )
 
     if not registros:
         st.info("Nenhum registro encontrado para os filtros.")
