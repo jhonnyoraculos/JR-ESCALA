@@ -1822,18 +1822,6 @@ def page_oficinas() -> None:
         auto_download=auto_download,
     )
 
-    if st.session_state.get("oficina_confirm_excluir") is not None:
-        excluir_id = st.session_state.get("oficina_confirm_excluir")
-        if _confirm_prompt("oficina_confirm_excluir", f"Excluir oficina #{excluir_id}?"):
-            try:
-                svc.excluir_oficina(excluir_id)
-                _set_flash("success", "Oficina excluída.")
-            except Exception as exc:
-                _set_flash("error", f"Erro ao excluir: {exc}")
-            _set_edit_target("oficina_edit_id", None, rerun=False)
-            _clear_cached_data()
-            st.rerun()
-
     edit_id = st.session_state.get("oficina_edit_id")
     edit_item = _cache_obter_oficina(edit_id) if edit_id else None
     if edit_item and edit_item.get("data") != data_iso:
@@ -1998,17 +1986,38 @@ def page_oficinas() -> None:
             _cell(cols[1], item.get("motorista_nome") or "-")
             _cell(cols[2], item.get("observacao") or "-")
             _cell(cols[3], item.get("data_saida") or "-", nowrap=True)
-            action_cols = cols[4].columns(2)
             item_id = item.get("id")
-            action_cols[0].button(
-                "Editar", key=f"oficina_row_edit_{item_id}", use_container_width=True,
-                on_click=_set_edit_target, args=("oficina_edit_id", item_id),
-                kwargs={"rerun": False},
-            )
-            action_cols[1].button(
-                "Excluir", key=f"oficina_row_del_{item_id}", use_container_width=True,
-                on_click=_request_confirm, args=("oficina_confirm_excluir", item_id),
-            )
+            if st.session_state.get("oficina_confirm_excluir") == item_id:
+                cols[4].caption("Excluir esta oficina?")
+                confirm_cols = cols[4].columns(2)
+                if confirm_cols[0].button(
+                    "Confirmar", key=f"oficina_delete_yes_{item_id}", use_container_width=True
+                ):
+                    try:
+                        svc.excluir_oficina(item_id)
+                        _set_flash("success", "Oficina excluída.")
+                    except Exception as exc:
+                        _set_flash("error", f"Erro ao excluir: {exc}")
+                    st.session_state.pop("oficina_confirm_excluir", None)
+                    _set_edit_target("oficina_edit_id", None, rerun=False)
+                    _clear_cached_data()
+                    st.rerun()
+                if confirm_cols[1].button(
+                    "Cancelar", key=f"oficina_delete_no_{item_id}", use_container_width=True
+                ):
+                    st.session_state.pop("oficina_confirm_excluir", None)
+                    st.rerun()
+            else:
+                action_cols = cols[4].columns(2)
+                action_cols[0].button(
+                    "Editar", key=f"oficina_row_edit_{item_id}", use_container_width=True,
+                    on_click=_set_edit_target, args=("oficina_edit_id", item_id),
+                    kwargs={"rerun": False},
+                )
+                action_cols[1].button(
+                    "Excluir", key=f"oficina_row_del_{item_id}", use_container_width=True,
+                    on_click=_request_confirm, args=("oficina_confirm_excluir", item_id),
+                )
     else:
         st.info("Nenhuma oficina cadastrada.")
 
@@ -2046,18 +2055,6 @@ def page_folgas() -> None:
         "folga_relatorio_download",
         auto_download=auto_download,
     )
-
-    if st.session_state.get("folga_confirm_excluir") is not None:
-        excluir_id = st.session_state.get("folga_confirm_excluir")
-        if _confirm_prompt("folga_confirm_excluir", f"Excluir folga #{excluir_id}?"):
-            try:
-                svc.remover_folga(excluir_id)
-                _set_flash("success", "Folga excluída.")
-            except Exception as exc:
-                _set_flash("error", f"Erro ao excluir: {exc}")
-            _set_edit_target("folga_edit_id", None, rerun=False)
-            _clear_cached_data()
-            st.rerun()
 
     edit_id = st.session_state.get("folga_edit_id")
     edit_item = None
@@ -2166,17 +2163,38 @@ def page_folgas() -> None:
             _cell(cols[0], item.get("nome") or "-")
             _cell(cols[1], item.get("funcao") or "-")
             _cell(cols[2], periodo or "-", nowrap=True)
-            action_cols = cols[3].columns(2)
             item_id = item.get("folga_id")
-            action_cols[0].button(
-                "Editar", key=f"folga_row_edit_{item_id}", use_container_width=True,
-                on_click=_set_edit_target, args=("folga_edit_id", item_id),
-                kwargs={"rerun": False},
-            )
-            action_cols[1].button(
-                "Excluir", key=f"folga_row_del_{item_id}", use_container_width=True,
-                on_click=_request_confirm, args=("folga_confirm_excluir", item_id),
-            )
+            if st.session_state.get("folga_confirm_excluir") == item_id:
+                cols[3].caption("Excluir esta folga?")
+                confirm_cols = cols[3].columns(2)
+                if confirm_cols[0].button(
+                    "Confirmar", key=f"folga_delete_yes_{item_id}", use_container_width=True
+                ):
+                    try:
+                        svc.remover_folga(item_id)
+                        _set_flash("success", "Folga excluída.")
+                    except Exception as exc:
+                        _set_flash("error", f"Erro ao excluir: {exc}")
+                    st.session_state.pop("folga_confirm_excluir", None)
+                    _set_edit_target("folga_edit_id", None, rerun=False)
+                    _clear_cached_data()
+                    st.rerun()
+                if confirm_cols[1].button(
+                    "Cancelar", key=f"folga_delete_no_{item_id}", use_container_width=True
+                ):
+                    st.session_state.pop("folga_confirm_excluir", None)
+                    st.rerun()
+            else:
+                action_cols = cols[3].columns(2)
+                action_cols[0].button(
+                    "Editar", key=f"folga_row_edit_{item_id}", use_container_width=True,
+                    on_click=_set_edit_target, args=("folga_edit_id", item_id),
+                    kwargs={"rerun": False},
+                )
+                action_cols[1].button(
+                    "Excluir", key=f"folga_row_del_{item_id}", use_container_width=True,
+                    on_click=_request_confirm, args=("folga_confirm_excluir", item_id),
+                )
     else:
         st.info("Nenhuma folga cadastrada.")
 
@@ -2231,18 +2249,6 @@ def page_escala_cd() -> None:
         "escala_relatorio_download",
         auto_download=auto_download,
     )
-
-    if st.session_state.get("escala_confirm_excluir") is not None:
-        excluir_id = st.session_state.get("escala_confirm_excluir")
-        if _confirm_prompt("escala_confirm_excluir", f"Excluir escala #{excluir_id}?"):
-            try:
-                svc.excluir_escala_cd(excluir_id)
-                _set_flash("success", "Escala (CD) excluída.")
-            except Exception as exc:
-                _set_flash("error", f"Erro ao excluir: {exc}")
-            _set_edit_target("escala_edit_id", None, rerun=False)
-            _clear_cached_data()
-            st.rerun()
 
     edit_id = st.session_state.get("escala_edit_id")
     edit_item = _cache_obter_escala_cd(edit_id) if edit_id else None
@@ -2367,17 +2373,38 @@ def page_escala_cd() -> None:
             _cell(cols[0], item.get("motorista_nome") or "-")
             _cell(cols[1], item.get("ajudante_nome") or "-")
             _cell(cols[2], item.get("observacao") or "-")
-            action_cols = cols[3].columns(2)
             item_id = item.get("id")
-            action_cols[0].button(
-                "Editar", key=f"escala_row_edit_{item_id}", use_container_width=True,
-                on_click=_set_edit_target, args=("escala_edit_id", item_id),
-                kwargs={"rerun": False},
-            )
-            action_cols[1].button(
-                "Excluir", key=f"escala_row_del_{item_id}", use_container_width=True,
-                on_click=_request_confirm, args=("escala_confirm_excluir", item_id),
-            )
+            if st.session_state.get("escala_confirm_excluir") == item_id:
+                cols[3].caption("Excluir esta escala?")
+                confirm_cols = cols[3].columns(2)
+                if confirm_cols[0].button(
+                    "Confirmar", key=f"escala_delete_yes_{item_id}", use_container_width=True
+                ):
+                    try:
+                        svc.excluir_escala_cd(item_id)
+                        _set_flash("success", "Escala (CD) excluída.")
+                    except Exception as exc:
+                        _set_flash("error", f"Erro ao excluir: {exc}")
+                    st.session_state.pop("escala_confirm_excluir", None)
+                    _set_edit_target("escala_edit_id", None, rerun=False)
+                    _clear_cached_data()
+                    st.rerun()
+                if confirm_cols[1].button(
+                    "Cancelar", key=f"escala_delete_no_{item_id}", use_container_width=True
+                ):
+                    st.session_state.pop("escala_confirm_excluir", None)
+                    st.rerun()
+            else:
+                action_cols = cols[3].columns(2)
+                action_cols[0].button(
+                    "Editar", key=f"escala_row_edit_{item_id}", use_container_width=True,
+                    on_click=_set_edit_target, args=("escala_edit_id", item_id),
+                    kwargs={"rerun": False},
+                )
+                action_cols[1].button(
+                    "Excluir", key=f"escala_row_del_{item_id}", use_container_width=True,
+                    on_click=_request_confirm, args=("escala_confirm_excluir", item_id),
+                )
     else:
         st.info("Nenhuma escala cadastrada.")
 
@@ -2552,18 +2579,6 @@ def page_rotas_semanais() -> None:
         _clear_cached_data()
         st.rerun()
 
-    if st.session_state.get("rota_confirm_excluir") is not None:
-        excluir_id = st.session_state.get("rota_confirm_excluir")
-        if _confirm_prompt("rota_confirm_excluir", f"Excluir rota #{excluir_id}?"):
-            try:
-                svc.remover_rota_semana(excluir_id)
-                _set_flash("success", "Rota semanal excluída.")
-            except Exception as exc:
-                _set_flash("error", f"Erro ao excluir: {exc}")
-            _set_edit_target("rota_edit_id", None, rerun=False)
-            _clear_cached_data()
-            st.rerun()
-
     if edit_item:
         st.button(
             "Cancelar edição", key="rotas_cancelar", on_click=_set_edit_target,
@@ -2582,25 +2597,46 @@ def page_rotas_semanais() -> None:
             _cell(cols[0], item.get("rota") or "-")
             _cell(cols[1], item.get("destino") or "-")
             _cell(cols[2], item.get("observacao") or "-")
-            action_cols = cols[3].columns(2)
             item_id = item.get("id")
-            action_cols[0].button(
-                "Editar",
-                key=f"rotas_row_edit_{item_id}",
-                use_container_width=True,
-                disabled=item.get("origem") == "jr_rotas",
-                on_click=_set_edit_target,
-                args=("rota_edit_id", item_id),
-                kwargs={"rerun": False},
-            )
-            action_cols[1].button(
-                "Excluir",
-                key=f"rotas_row_del_{item_id}",
-                use_container_width=True,
-                disabled=item.get("origem") == "jr_rotas",
-                on_click=_request_confirm,
-                args=("rota_confirm_excluir", item_id),
-            )
+            if st.session_state.get("rota_confirm_excluir") == item_id:
+                cols[3].caption("Excluir esta rota?")
+                confirm_cols = cols[3].columns(2)
+                if confirm_cols[0].button(
+                    "Confirmar", key=f"rota_delete_yes_{item_id}", use_container_width=True
+                ):
+                    try:
+                        svc.remover_rota_semana(item_id)
+                        _set_flash("success", "Rota semanal excluída.")
+                    except Exception as exc:
+                        _set_flash("error", f"Erro ao excluir: {exc}")
+                    st.session_state.pop("rota_confirm_excluir", None)
+                    _set_edit_target("rota_edit_id", None, rerun=False)
+                    _clear_cached_data()
+                    st.rerun()
+                if confirm_cols[1].button(
+                    "Cancelar", key=f"rota_delete_no_{item_id}", use_container_width=True
+                ):
+                    st.session_state.pop("rota_confirm_excluir", None)
+                    st.rerun()
+            else:
+                action_cols = cols[3].columns(2)
+                action_cols[0].button(
+                    "Editar",
+                    key=f"rotas_row_edit_{item_id}",
+                    use_container_width=True,
+                    disabled=item.get("origem") == "jr_rotas",
+                    on_click=_set_edit_target,
+                    args=("rota_edit_id", item_id),
+                    kwargs={"rerun": False},
+                )
+                action_cols[1].button(
+                    "Excluir",
+                    key=f"rotas_row_del_{item_id}",
+                    use_container_width=True,
+                    disabled=item.get("origem") == "jr_rotas",
+                    on_click=_request_confirm,
+                    args=("rota_confirm_excluir", item_id),
+                )
     else:
         st.info("Nenhuma rota cadastrada.")
 
@@ -2666,18 +2702,6 @@ def page_caminhoes() -> None:
         _clear_cached_data()
         st.rerun()
 
-    if st.session_state.get("caminhao_confirm_excluir") is not None:
-        excluir_id = st.session_state.get("caminhao_confirm_excluir")
-        if _confirm_prompt("caminhao_confirm_excluir", f"Excluir caminhão #{excluir_id}?"):
-            try:
-                svc.remover_caminhao(excluir_id)
-                _set_flash("success", "Caminhão excluído.")
-            except Exception as exc:
-                _set_flash("error", f"Erro ao excluir: {exc}")
-            _set_edit_target("caminhao_edit_id", None, rerun=False)
-            _clear_cached_data()
-            st.rerun()
-
     if edit_item:
         st.button(
             "Cancelar edição", key="caminhao_cancelar", on_click=_set_edit_target,
@@ -2698,17 +2722,38 @@ def page_caminhoes() -> None:
             _cell(cols[1], item.get("modelo") or "-")
             _cell(cols[2], item.get("observacao") or "-")
             _cell(cols[3], "Ativo" if item.get("ativo") else "Inativo", nowrap=True)
-            action_cols = cols[4].columns(2)
             item_id = item.get("id")
-            action_cols[0].button(
-                "Editar", key=f"caminhao_row_edit_{item_id}", use_container_width=True,
-                on_click=_set_edit_target, args=("caminhao_edit_id", item_id),
-                kwargs={"rerun": False},
-            )
-            action_cols[1].button(
-                "Excluir", key=f"caminhao_row_del_{item_id}", use_container_width=True,
-                on_click=_request_confirm, args=("caminhao_confirm_excluir", item_id),
-            )
+            if st.session_state.get("caminhao_confirm_excluir") == item_id:
+                cols[4].caption("Excluir este caminhão?")
+                confirm_cols = cols[4].columns(2)
+                if confirm_cols[0].button(
+                    "Confirmar", key=f"caminhao_delete_yes_{item_id}", use_container_width=True
+                ):
+                    try:
+                        svc.remover_caminhao(item_id)
+                        _set_flash("success", "Caminhão excluído.")
+                    except Exception as exc:
+                        _set_flash("error", f"Erro ao excluir: {exc}")
+                    st.session_state.pop("caminhao_confirm_excluir", None)
+                    _set_edit_target("caminhao_edit_id", None, rerun=False)
+                    _clear_cached_data()
+                    st.rerun()
+                if confirm_cols[1].button(
+                    "Cancelar", key=f"caminhao_delete_no_{item_id}", use_container_width=True
+                ):
+                    st.session_state.pop("caminhao_confirm_excluir", None)
+                    st.rerun()
+            else:
+                action_cols = cols[4].columns(2)
+                action_cols[0].button(
+                    "Editar", key=f"caminhao_row_edit_{item_id}", use_container_width=True,
+                    on_click=_set_edit_target, args=("caminhao_edit_id", item_id),
+                    kwargs={"rerun": False},
+                )
+                action_cols[1].button(
+                    "Excluir", key=f"caminhao_row_del_{item_id}", use_container_width=True,
+                    on_click=_request_confirm, args=("caminhao_confirm_excluir", item_id),
+                )
     else:
         st.info("Nenhum caminhão cadastrado.")
 
@@ -2839,24 +2884,46 @@ def page_fretados() -> None:
         _cell(cols[4], status, nowrap=True)
         colaborador_id = int(item["colaborador_id"])
         caminhao_id = item.get("caminhao_id")
-        action_cols = cols[5].columns(2)
-        action_cols[0].button(
-            "Editar caminhão",
-            key=f"fretado_edit_{colaborador_id}",
-            use_container_width=True,
-            disabled=caminhao_id is None,
-            on_click=_set_edit_target,
-            args=("fretado_caminhao_edit_id", caminhao_id),
-            kwargs={"rerun": False},
-        )
-        action_cols[1].button(
-            "Desvincular",
-            key=f"fretado_unlink_{colaborador_id}",
-            use_container_width=True,
-            disabled=caminhao_id is None,
-            on_click=_request_confirm,
-            args=("fretado_confirm_desvincular", colaborador_id),
-        )
+        if st.session_state.get("fretado_confirm_desvincular") == colaborador_id:
+            cols[5].caption("Desvincular este caminhão?")
+            confirm_cols = cols[5].columns(2)
+            if confirm_cols[0].button(
+                "Confirmar", key=f"fretado_unlink_yes_{colaborador_id}",
+                use_container_width=True,
+            ):
+                try:
+                    svc.desvincular_caminhao_fretado(colaborador_id)
+                    _set_flash("success", "Caminhão desvinculado.")
+                except Exception as exc:
+                    _set_flash("error", f"Erro ao desvincular: {exc}")
+                st.session_state.pop("fretado_confirm_desvincular", None)
+                _clear_cached_data()
+                st.rerun()
+            if confirm_cols[1].button(
+                "Cancelar", key=f"fretado_unlink_no_{colaborador_id}",
+                use_container_width=True,
+            ):
+                st.session_state.pop("fretado_confirm_desvincular", None)
+                st.rerun()
+        else:
+            action_cols = cols[5].columns(2)
+            action_cols[0].button(
+                "Editar caminhão",
+                key=f"fretado_edit_{colaborador_id}",
+                use_container_width=True,
+                disabled=caminhao_id is None,
+                on_click=_set_edit_target,
+                args=("fretado_caminhao_edit_id", caminhao_id),
+                kwargs={"rerun": False},
+            )
+            action_cols[1].button(
+                "Desvincular",
+                key=f"fretado_unlink_{colaborador_id}",
+                use_container_width=True,
+                disabled=caminhao_id is None,
+                on_click=_request_confirm,
+                args=("fretado_confirm_desvincular", colaborador_id),
+            )
 
         if st.session_state.get("fretado_caminhao_edit_id") == caminhao_id and caminhao_id:
             with st.form(f"fretado_caminhao_form_{caminhao_id}"):
@@ -2899,23 +2966,6 @@ def page_fretados() -> None:
             if cancelar:
                 _set_edit_target("fretado_caminhao_edit_id", None, rerun=False)
                 st.rerun()
-
-        if st.session_state.get("fretado_confirm_desvincular") == colaborador_id:
-            st.warning(f"Desvincular o caminhão de **{item.get('nome') or 'este fretado'}**?")
-            confirm_col, cancel_col, _ = st.columns([1, 1, 4])
-            if confirm_col.button("Confirmar", key=f"fretado_unlink_yes_{colaborador_id}"):
-                try:
-                    svc.desvincular_caminhao_fretado(colaborador_id)
-                    _set_flash("success", "Caminhão desvinculado.")
-                except Exception as exc:
-                    _set_flash("error", f"Erro ao desvincular: {exc}")
-                st.session_state.pop("fretado_confirm_desvincular", None)
-                _clear_cached_data()
-                st.rerun()
-            if cancel_col.button("Cancelar", key=f"fretado_unlink_no_{colaborador_id}"):
-                st.session_state.pop("fretado_confirm_desvincular", None)
-                st.rerun()
-
 
 def page_ferias() -> None:
     _apply_pending_edit_target("ferias_edit_id")
@@ -3013,18 +3063,6 @@ def page_ferias() -> None:
         _clear_cached_data()
         st.rerun()
 
-    if st.session_state.get("ferias_confirm_excluir") is not None:
-        excluir_id = st.session_state.get("ferias_confirm_excluir")
-        if _confirm_prompt("ferias_confirm_excluir", f"Excluir férias #{excluir_id}?"):
-            try:
-                svc.remover_ferias(excluir_id)
-                _set_flash("success", "Férias excluídas.")
-            except Exception as exc:
-                _set_flash("error", f"Erro ao excluir: {exc}")
-            _set_edit_target("ferias_edit_id", None, rerun=False)
-            _clear_cached_data()
-            st.rerun()
-
     if edit_item:
         st.button(
             "Cancelar edição", key="ferias_cancelar", on_click=_set_edit_target,
@@ -3047,17 +3085,38 @@ def page_ferias() -> None:
             _cell(cols[2], item.get("data_fim") or "-", nowrap=True)
             _cell(cols[3], item.get("observacao") or "-")
             _cell(cols[4], item.get("status") or "-")
-            action_cols = cols[5].columns(2)
             item_id = item.get("id")
-            action_cols[0].button(
-                "Editar", key=f"ferias_row_edit_{item_id}", use_container_width=True,
-                on_click=_set_edit_target, args=("ferias_edit_id", item_id),
-                kwargs={"rerun": False},
-            )
-            action_cols[1].button(
-                "Excluir", key=f"ferias_row_del_{item_id}", use_container_width=True,
-                on_click=_request_confirm, args=("ferias_confirm_excluir", item_id),
-            )
+            if st.session_state.get("ferias_confirm_excluir") == item_id:
+                cols[5].caption("Excluir estas férias?")
+                confirm_cols = cols[5].columns(2)
+                if confirm_cols[0].button(
+                    "Confirmar", key=f"ferias_delete_yes_{item_id}", use_container_width=True
+                ):
+                    try:
+                        svc.remover_ferias(item_id)
+                        _set_flash("success", "Férias excluídas.")
+                    except Exception as exc:
+                        _set_flash("error", f"Erro ao excluir: {exc}")
+                    st.session_state.pop("ferias_confirm_excluir", None)
+                    _set_edit_target("ferias_edit_id", None, rerun=False)
+                    _clear_cached_data()
+                    st.rerun()
+                if confirm_cols[1].button(
+                    "Cancelar", key=f"ferias_delete_no_{item_id}", use_container_width=True
+                ):
+                    st.session_state.pop("ferias_confirm_excluir", None)
+                    st.rerun()
+            else:
+                action_cols = cols[5].columns(2)
+                action_cols[0].button(
+                    "Editar", key=f"ferias_row_edit_{item_id}", use_container_width=True,
+                    on_click=_set_edit_target, args=("ferias_edit_id", item_id),
+                    kwargs={"rerun": False},
+                )
+                action_cols[1].button(
+                    "Excluir", key=f"ferias_row_del_{item_id}", use_container_width=True,
+                    on_click=_request_confirm, args=("ferias_confirm_excluir", item_id),
+                )
     else:
         st.info("Nenhum período de férias cadastrado.")
 
@@ -3080,29 +3139,77 @@ def _render_lista_colaboradores(registros: list[dict], mensagem_vazia: str) -> N
         _cell(cols[1], item.get("funcao") or "-")
         _cell(cols[2], item.get("observacao") or "-")
         _cell(cols[3], "Ativo" if item.get("ativo") else "Inativo", nowrap=True)
-        action_cols = cols[4].columns(3)
         item_id = item.get("id")
-        if action_cols[0].button(
-            "Editar", key=f"colab_row_edit_{item_id}", use_container_width=True
-        ):
-            st.session_state["colab_edit_id"] = item_id
-            st.session_state.pop("colab_confirm_desativar", None)
-            st.session_state.pop("colab_confirm_excluir", None)
-        if action_cols[1].button(
-            "Desativar",
-            key=f"colab_row_desativar_{item_id}",
-            use_container_width=True,
-            disabled=not bool(item.get("ativo")),
-        ):
-            st.session_state["colab_edit_id"] = None
-            st.session_state.pop("colab_confirm_excluir", None)
-            _request_confirm("colab_confirm_desativar", item_id)
-        if action_cols[2].button(
-            "Excluir", key=f"colab_row_excluir_{item_id}", use_container_width=True
-        ):
-            st.session_state["colab_edit_id"] = None
-            st.session_state.pop("colab_confirm_desativar", None)
-            _request_confirm("colab_confirm_excluir", item_id)
+        confirmando_desativacao = (
+            st.session_state.get("colab_confirm_desativar") == item_id
+        )
+        confirmando_exclusao = st.session_state.get("colab_confirm_excluir") == item_id
+        if confirmando_desativacao:
+            cols[4].caption("Desativar este colaborador?")
+            confirm_cols = cols[4].columns(2)
+            if confirm_cols[0].button(
+                "Confirmar", key=f"colab_disable_yes_{item_id}", use_container_width=True
+            ):
+                try:
+                    svc.desativar_colaborador(item_id)
+                    _set_flash("success", "Colaborador desativado.")
+                except Exception as exc:
+                    _set_flash("error", f"Erro ao desativar: {exc}")
+                st.session_state.pop("colab_confirm_desativar", None)
+                _clear_cached_data()
+                st.rerun()
+            if confirm_cols[1].button(
+                "Cancelar", key=f"colab_disable_no_{item_id}", use_container_width=True
+            ):
+                st.session_state.pop("colab_confirm_desativar", None)
+                st.rerun()
+        elif confirmando_exclusao:
+            cols[4].caption("Excluir este colaborador e seus vínculos?")
+            confirm_cols = cols[4].columns(2)
+            if confirm_cols[0].button(
+                "Confirmar", key=f"colab_delete_yes_{item_id}", use_container_width=True
+            ):
+                try:
+                    foto_path = svc.excluir_colaborador(item_id)
+                    if foto_path:
+                        try:
+                            (UPLOAD_DIR / foto_path).unlink()
+                        except OSError:
+                            pass
+                    _set_flash("success", "Colaborador excluído.")
+                except Exception as exc:
+                    _set_flash("error", f"Erro ao excluir: {exc}")
+                st.session_state.pop("colab_confirm_excluir", None)
+                _clear_cached_data()
+                st.rerun()
+            if confirm_cols[1].button(
+                "Cancelar", key=f"colab_delete_no_{item_id}", use_container_width=True
+            ):
+                st.session_state.pop("colab_confirm_excluir", None)
+                st.rerun()
+        else:
+            action_cols = cols[4].columns(3)
+            if action_cols[0].button(
+                "Editar", key=f"colab_row_edit_{item_id}", use_container_width=True
+            ):
+                st.session_state["colab_edit_id"] = item_id
+                st.session_state.pop("colab_confirm_desativar", None)
+                st.session_state.pop("colab_confirm_excluir", None)
+            if action_cols[1].button(
+                "Desativar",
+                key=f"colab_row_desativar_{item_id}",
+                use_container_width=True,
+                disabled=not bool(item.get("ativo")),
+            ):
+                st.session_state["colab_edit_id"] = None
+                st.session_state.pop("colab_confirm_excluir", None)
+                _request_confirm("colab_confirm_desativar", item_id)
+            if action_cols[2].button(
+                "Excluir", key=f"colab_row_excluir_{item_id}", use_container_width=True
+            ):
+                st.session_state["colab_edit_id"] = None
+                st.session_state.pop("colab_confirm_desativar", None)
+                _request_confirm("colab_confirm_excluir", item_id)
 
         if st.session_state.get("colab_edit_id") == item_id:
             st.info(f"Editando **{item.get('nome') or 'colaborador'}**")
@@ -3163,47 +3270,6 @@ def _render_lista_colaboradores(registros: list[dict], mensagem_vazia: str) -> N
                 st.session_state["colab_edit_id"] = None
                 _clear_cached_data()
                 st.rerun()
-
-        if st.session_state.get("colab_confirm_desativar") == item_id:
-            st.warning(f"Desativar **{item.get('nome') or 'este colaborador'}**?")
-            confirm_col, cancel_col, _ = st.columns([1, 1, 4])
-            if confirm_col.button("Sim, desativar", key=f"colab_disable_yes_{item_id}"):
-                try:
-                    svc.desativar_colaborador(item_id)
-                    _set_flash("success", "Colaborador desativado.")
-                except Exception as exc:
-                    _set_flash("error", f"Erro ao desativar: {exc}")
-                st.session_state.pop("colab_confirm_desativar", None)
-                _clear_cached_data()
-                st.rerun()
-            if cancel_col.button("Cancelar", key=f"colab_disable_no_{item_id}"):
-                st.session_state.pop("colab_confirm_desativar", None)
-                st.rerun()
-
-        if st.session_state.get("colab_confirm_excluir") == item_id:
-            st.warning(
-                f"Excluir **{item.get('nome') or 'este colaborador'}** e remover seus vínculos "
-                "com folgas, férias e bloqueios?"
-            )
-            confirm_col, cancel_col, _ = st.columns([1, 1, 4])
-            if confirm_col.button("Sim, excluir", key=f"colab_delete_yes_{item_id}"):
-                try:
-                    foto_path = svc.excluir_colaborador(item_id)
-                    if foto_path:
-                        try:
-                            (UPLOAD_DIR / foto_path).unlink()
-                        except OSError:
-                            pass
-                    _set_flash("success", "Colaborador excluído.")
-                except Exception as exc:
-                    _set_flash("error", f"Erro ao excluir: {exc}")
-                st.session_state.pop("colab_confirm_excluir", None)
-                _clear_cached_data()
-                st.rerun()
-            if cancel_col.button("Cancelar", key=f"colab_delete_no_{item_id}"):
-                st.session_state.pop("colab_confirm_excluir", None)
-                st.rerun()
-
 
 def page_colaboradores() -> None:
     st.subheader("Colaboradores")
@@ -3335,46 +3401,6 @@ def page_log() -> None:
     }
 
     registros = _cache_consultar_log_carregamentos(tuple(sorted(filtros.items())))
-
-    if st.session_state.get("log_confirm_liberar") is not None:
-        liberar_id = st.session_state.get("log_confirm_liberar")
-        if _confirm_prompt("log_confirm_liberar", f"Liberar carregamento #{liberar_id} agora?"):
-            try:
-                registro = _cache_obter_carregamento(liberar_id)
-                if not registro:
-                    _set_flash("error", "Carregamento não encontrado.")
-                    st.rerun()
-                observacao_padrao = (registro.get("observacao") or "0").strip()
-                duracao_planejada = svc.OBSERVACAO_DURACAO.get(observacao_padrao, 0)
-                ajustes_map = svc.listar_ajustes_por_carregamentos([liberar_id])
-                ajustes = ajustes_map.get(liberar_id, [])
-                duracao_atual = ajustes[-1]["duracao_nova"] if ajustes else duracao_planejada
-                svc.registrar_ajuste_rota(liberar_id, duracao_atual, 0, "Liberado agora")
-                data_inicio_iso = svc.obter_data_saida_registro(registro)
-                inicio_dt = svc.parse_date(data_inicio_iso) or date.today()
-                svc.atualizar_bloqueios_para_ajuste(
-                    liberar_id, inicio_dt.isoformat(), liberar_imediato=True
-                )
-                _set_flash("success", "Carregamento liberado.")
-            except Exception as exc:
-                _set_flash("error", f"Erro ao liberar: {exc}")
-            _clear_cached_data()
-            st.rerun()
-    elif st.session_state.get("log_confirm_excluir") is not None:
-        excluir_id = st.session_state.get("log_confirm_excluir")
-        if _confirm_prompt("log_confirm_excluir", f"Excluir carregamento #{excluir_id}?"):
-            try:
-                registro = _cache_obter_carregamento(excluir_id)
-                if registro:
-                    svc.registrar_rota_suprimida(
-                        registro.get("data"), registro.get("rota")
-                    )
-                svc.remover_carregamento_completo(excluir_id)
-                _set_flash("success", "Carregamento excluído.")
-            except Exception as exc:
-                _set_flash("error", f"Erro ao excluir: {exc}")
-            _clear_cached_data()
-            st.rerun()
 
     auto_download = False
     if st.button("Exportar Excel", key="log_exportar"):
@@ -3563,20 +3589,85 @@ def page_log() -> None:
                     _clear_cached_data()
                     st.rerun()
 
+            item_id = item["id"]
+            confirmando_liberacao = st.session_state.get("log_confirm_liberar") == item_id
+            confirmando_exclusao = st.session_state.get("log_confirm_excluir") == item_id
             action_cols = st.columns(2)
-            if item.get("status") != "Finalizado":
-                action_cols[0].button(
-                    "Liberar agora",
-                    key=f"log_liberar_{item['id']}",
+            if confirmando_liberacao:
+                action_cols[0].caption("Liberar este carregamento agora?")
+                if action_cols[0].button(
+                    "Confirmar", key=f"log_liberar_yes_{item_id}", use_container_width=True
+                ):
+                    try:
+                        registro = _cache_obter_carregamento(item_id)
+                        if not registro:
+                            _set_flash("error", "Carregamento não encontrado.")
+                            st.rerun()
+                        observacao_padrao = (registro.get("observacao") or "0").strip()
+                        duracao_planejada = svc.OBSERVACAO_DURACAO.get(observacao_padrao, 0)
+                        ajustes_map = svc.listar_ajustes_por_carregamentos([item_id])
+                        ajustes = ajustes_map.get(item_id, [])
+                        duracao_atual = (
+                            ajustes[-1]["duracao_nova"] if ajustes else duracao_planejada
+                        )
+                        svc.registrar_ajuste_rota(
+                            item_id, duracao_atual, 0, "Liberado agora"
+                        )
+                        data_inicio_iso = svc.obter_data_saida_registro(registro)
+                        inicio_dt = svc.parse_date(data_inicio_iso) or date.today()
+                        svc.atualizar_bloqueios_para_ajuste(
+                            item_id, inicio_dt.isoformat(), liberar_imediato=True
+                        )
+                        _set_flash("success", "Carregamento liberado.")
+                    except Exception as exc:
+                        _set_flash("error", f"Erro ao liberar: {exc}")
+                    st.session_state.pop("log_confirm_liberar", None)
+                    _clear_cached_data()
+                    st.rerun()
+                if action_cols[1].button(
+                    "Cancelar", key=f"log_liberar_no_{item_id}", use_container_width=True
+                ):
+                    st.session_state.pop("log_confirm_liberar", None)
+                    st.rerun()
+            elif confirmando_exclusao:
+                action_cols[0].caption("Excluir este carregamento?")
+                if action_cols[0].button(
+                    "Confirmar", key=f"log_excluir_yes_{item_id}", use_container_width=True
+                ):
+                    try:
+                        registro = _cache_obter_carregamento(item_id)
+                        if registro:
+                            svc.registrar_rota_suprimida(
+                                registro.get("data"), registro.get("rota")
+                            )
+                        svc.remover_carregamento_completo(item_id)
+                        _set_flash("success", "Carregamento excluído.")
+                    except Exception as exc:
+                        _set_flash("error", f"Erro ao excluir: {exc}")
+                    st.session_state.pop("log_confirm_excluir", None)
+                    _clear_cached_data()
+                    st.rerun()
+                if action_cols[1].button(
+                    "Cancelar", key=f"log_excluir_no_{item_id}", use_container_width=True
+                ):
+                    st.session_state.pop("log_confirm_excluir", None)
+                    st.rerun()
+            else:
+                if item.get("status") != "Finalizado":
+                    action_cols[0].button(
+                        "Liberar agora",
+                        key=f"log_liberar_{item_id}",
+                        use_container_width=True,
+                        on_click=_request_confirm,
+                        args=("log_confirm_liberar", item_id),
+                    )
+                action_cols[1].button(
+                    "Excluir carregamento",
+                    key=f"log_excluir_{item_id}",
+                    use_container_width=True,
                     on_click=_request_confirm,
-                    args=("log_confirm_liberar", item["id"]),
+                    args=("log_confirm_excluir", item_id),
                 )
-            action_cols[1].button(
-                "Excluir carregamento",
-                key=f"log_excluir_{item['id']}",
-                on_click=_request_confirm,
-                args=("log_confirm_excluir", item["id"]),
-            )
         st.markdown("---")
 
 
