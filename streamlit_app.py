@@ -996,6 +996,15 @@ def page_carregamentos() -> None:
         (vinculo_fretado.get("placa") or "").upper() if vinculo_fretado else ""
     )
 
+    feedback_slot = st.empty()
+    feedback_pendente = st.session_state.pop("carreg_form_feedback", None)
+    if feedback_pendente:
+        feedback_tipo, feedback_mensagem = feedback_pendente
+        if feedback_tipo == "success":
+            feedback_slot.success(feedback_mensagem)
+        else:
+            feedback_slot.error(feedback_mensagem)
+
     with st.container(border=True):
         col_a, col_b, col_c = st.columns(3)
         with col_a:
@@ -1110,70 +1119,90 @@ def page_carregamentos() -> None:
         )
 
     if submit:
+        erro_validacao = None
         if not rota_num_valor or not rota_destino_valor:
-            _set_flash("error", "Informe rota e destino.")
-            st.rerun()
-        rota_texto = f"{rota_num_valor.strip()} - {rota_destino_valor.strip()}"
-        ignorar = (("carregamento_id", edit_id),) if edit_id else ()
-        disponibilidade_submit = _cache_disponibilidade(form_data_iso, ignorar)
-        indis = disponibilidade_submit.get("motoristas", set()).union(
-            disponibilidade_submit.get("ajudantes", set())
-        )
-        if motorista_id and motorista_id in indis:
-            _set_flash("error", "Motorista indisponível nesta data.")
-            st.rerun()
-        if ajudante_id and ajudante_id in indis:
-            _set_flash("error", "Ajudante indisponível nesta data.")
-            st.rerun()
-        if placa_valor and placa_valor.upper() in disponibilidade_submit.get("caminhoes", set()):
-            _set_flash("error", "Caminhão indisponível nesta data.")
-            st.rerun()
-        try:
-            if edit_item:
-                registro_anterior = _cache_obter_carregamento(edit_item["id"])
-                svc.atualizar_carregamento(
-                    edit_item["id"],
-                    form_data_iso,
-                    form_data_saida,
-                    rota_texto,
-                    placa_valor,
-                    motorista_id,
-                    ajudante_id,
-                    observacao_valor,
-                    obs_extra,
-                    observacao_cor,
+            erro_validacao = "Informe rota e destino."
+        else:
+            rota_texto = f"{rota_num_valor.strip()} - {rota_destino_valor.strip()}"
+            ignorar = (("carregamento_id", edit_id),) if edit_id else ()
+            disponibilidade_submit = _cache_disponibilidade(form_data_iso, ignorar)
+            indis = disponibilidade_submit.get("motoristas", set()).union(
+                disponibilidade_submit.get("ajudantes", set())
+            )
+            if motorista_id and motorista_id in indis:
+                erro_validacao = "Motorista indisponível nesta data."
+            elif ajudante_id and ajudante_id in indis:
+                erro_validacao = "Ajudante indisponível nesta data."
+            elif placa_valor and placa_valor.upper() in disponibilidade_submit.get(
+                "caminhoes", set()
+            ):
+                erro_validacao = "Caminhão indisponível nesta data."
+
+        if erro_validacao:
+            feedback_slot.error(erro_validacao)
+        else:
+            try:
+                spinner_texto = (
+                    "Atualizando carregamento..." if edit_item else "Salvando carregamento..."
                 )
-                if registro_anterior and registro_anterior.get("rota") != rota_texto:
-                    svc.registrar_rota_suprimida(registro_anterior.get("data"), registro_anterior.get("rota"))
-                svc.remover_bloqueios_por_carregamento(edit_item["id"])
-                svc.criar_bloqueios_para_carregamento(
-                    edit_item["id"], form_data_iso, [motorista_id, ajudante_id], observacao_valor
-                )
-                _set_flash("success", "Carregamento atualizado.")
+                with st.spinner(spinner_texto):
+                    if edit_item:
+                        registro_anterior = _cache_obter_carregamento(edit_item["id"])
+                        svc.atualizar_carregamento(
+                            edit_item["id"],
+                            form_data_iso,
+                            form_data_saida,
+                            rota_texto,
+                            placa_valor,
+                            motorista_id,
+                            ajudante_id,
+                            observacao_valor,
+                            obs_extra,
+                            observacao_cor,
+                        )
+                        if registro_anterior and registro_anterior.get("rota") != rota_texto:
+                            svc.registrar_rota_suprimida(
+                                registro_anterior.get("data"),
+                                registro_anterior.get("rota"),
+                            )
+                        svc.remover_bloqueios_por_carregamento(edit_item["id"])
+                        svc.criar_bloqueios_para_carregamento(
+                            edit_item["id"],
+                            form_data_iso,
+                            [motorista_id, ajudante_id],
+                            observacao_valor,
+                        )
+                        mensagem_sucesso = (
+                            "Carregamento atualizado. A rota agora está marcada como OK."
+                        )
+                    else:
+                        novo_id = svc.salvar_carregamento(
+                            form_data_iso,
+                            rota_texto,
+                            placa_valor,
+                            motorista_id,
+                            ajudante_id,
+                            observacao_valor,
+                            obs_extra,
+                            observacao_cor,
+                            form_data_saida,
+                            revisado=True,
+                        )
+                        svc.criar_bloqueios_para_carregamento(
+                            novo_id,
+                            form_data_iso,
+                            [motorista_id, ajudante_id],
+                            observacao_valor,
+                        )
+                        mensagem_sucesso = "Carregamento salvo."
+            except Exception as exc:
+                feedback_slot.error(f"Não foi possível salvar: {exc}")
             else:
-                novo_id = svc.salvar_carregamento(
-                    form_data_iso,
-                    rota_texto,
-                    placa_valor,
-                    motorista_id,
-                    ajudante_id,
-                    observacao_valor,
-                    obs_extra,
-                    observacao_cor,
-                    form_data_saida,
-                    revisado=True,
-                )
-                svc.criar_bloqueios_para_carregamento(
-                    novo_id, form_data_iso, [motorista_id, ajudante_id], observacao_valor
-                )
-                _set_flash("success", "Carregamento salvo.")
-        except Exception as exc:
-            _set_flash("error", f"Erro ao salvar: {exc}")
-            st.rerun()
-        _clear_cached_data()
-        st.session_state["carreg_pending_edit_id"] = None
-        st.session_state["carreg_pending_reset_form"] = True
-        st.rerun()
+                _clear_cached_data()
+                st.session_state["carreg_form_feedback"] = ("success", mensagem_sucesso)
+                st.session_state["carreg_pending_edit_id"] = None
+                st.session_state["carreg_pending_reset_form"] = True
+                st.rerun()
 
     if edit_item:
         st.button(

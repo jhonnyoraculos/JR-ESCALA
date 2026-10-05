@@ -1481,6 +1481,8 @@ def atualizar_carregamento(
                 carregamento_id,
             ),
         )
+        if cur.rowcount == 0:
+            raise ValueError("Carregamento não encontrado. Atualize a página e tente novamente.")
         conn.commit()
 
 

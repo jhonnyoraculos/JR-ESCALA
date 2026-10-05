@@ -90,6 +90,18 @@ class ServiceCrudTests(unittest.TestCase):
             )
             self.assertEqual(cursor.fetchone()[0], 0)
 
+        with self.assertRaisesRegex(ValueError, "não encontrado"):
+            services.atualizar_carregamento(
+                999999,
+                "2026-10-02",
+                "2026-10-03",
+                "R.999 - INEXISTENTE",
+                None,
+                None,
+                None,
+                "0",
+            )
+
     def test_sync_requested_collaborators_preserves_fretados_and_is_idempotent(self):
         services.atualizar_colaborador(
             self.motorista,
@@ -164,6 +176,30 @@ class ServiceCrudTests(unittest.TestCase):
             services.obter_carregamento(carregamento_id)["placa"],
             "FRT-1A23",
         )
+
+        pendente_id = services.salvar_carregamento(
+            "2026-10-02",
+            "R.30 - ITAGUARA",
+            None,
+            None,
+            None,
+            "ROTA 1 DIA (BATE E VOLTA)",
+        )
+        services.atualizar_carregamento(
+            pendente_id,
+            "2026-10-02",
+            "2026-10-05",
+            "R.30 - ITAGUARA",
+            None,
+            fretado_id,
+            self.ajudante,
+            "ROTA 1 DIA (BATE E VOLTA)",
+        )
+        atualizado = services.obter_carregamento(pendente_id)
+        self.assertEqual(atualizado["placa"], "FRT-1A23")
+        self.assertEqual(atualizado["motorista_id"], fretado_id)
+        self.assertEqual(atualizado["ajudante_id"], self.ajudante)
+        self.assertEqual(atualizado["revisado"], 1)
 
         with self.assertRaisesRegex(ValueError, "exclusivo"):
             services.salvar_carregamento(
