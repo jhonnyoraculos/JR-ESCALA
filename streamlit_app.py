@@ -5,6 +5,7 @@ from datetime import date, timedelta
 import html
 import json
 from pathlib import Path
+import unicodedata
 
 import streamlit as st
 
@@ -305,6 +306,14 @@ def _numero_rota_ordem(item: dict) -> tuple[int, int | str]:
     if digitos:
         return (0, int(digitos))
     return (1, numero.upper())
+
+
+def _normalizar_busca(valor: object) -> str:
+    texto = unicodedata.normalize("NFKD", str(valor or ""))
+    texto = "".join(
+        caractere for caractere in texto if not unicodedata.combining(caractere)
+    )
+    return " ".join(texto.casefold().split())
 
 
 def _request_confirm(key: str, payload: object = True) -> None:
@@ -2620,6 +2629,30 @@ def page_colaboradores() -> None:
         _clear_cached_data()
         st.rerun()
 
+    pesquisa = st.text_input(
+        "Pesquisar colaborador",
+        placeholder="Digite o nome, função, observação ou status",
+        key="colab_pesquisa",
+    )
+    termo_pesquisa = _normalizar_busca(pesquisa)
+    if termo_pesquisa:
+        registros = [
+            item
+            for item in registros
+            if termo_pesquisa
+            in _normalizar_busca(
+                " ".join(
+                    (
+                        item.get("nome") or "",
+                        item.get("funcao") or "",
+                        item.get("observacao") or "",
+                        "Ativo" if item.get("ativo") else "Inativo",
+                    )
+                )
+            )
+        ]
+        st.caption(f"{len(registros)} colaborador(es) encontrado(s).")
+
     if registros:
         col_sizes = [2.2, 1.2, 2.6, 1.2, 2.8]
         header = st.columns(col_sizes)
@@ -2754,7 +2787,12 @@ def page_colaboradores() -> None:
                     st.session_state.pop("colab_confirm_excluir", None)
                     st.rerun()
     else:
-        st.info("Nenhum colaborador cadastrado.")
+        mensagem_vazia = (
+            "Nenhum colaborador encontrado para esta pesquisa."
+            if termo_pesquisa
+            else "Nenhum colaborador cadastrado."
+        )
+        st.info(mensagem_vazia)
 
 
 def page_log() -> None:
