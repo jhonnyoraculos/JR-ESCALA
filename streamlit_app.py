@@ -2131,7 +2131,10 @@ def page_rotas_semanais() -> None:
 def page_caminhoes() -> None:
     _apply_pending_edit_target("caminhao_edit_id")
     st.subheader("Caminhões")
-    registros = _cache_listar_caminhoes_gerais(ativos_only=False)
+    # Exibe toda a frota para consulta e manutenção, inclusive os caminhões
+    # exclusivos dos fretados. A seleção nos carregamentos continua usando
+    # apenas _cache_listar_caminhoes_ativos(), que exclui esses veículos.
+    registros = _cache_listar_caminhoes(ativos_only=False)
 
     edit_id = st.session_state.get("caminhao_edit_id")
     edit_item = None
