@@ -328,6 +328,30 @@ class ServiceCrudTests(unittest.TestCase):
         services.excluir_escala_cd(escala_id)
         self.assertIsNone(services.obter_escala_cd(escala_id))
 
+    def test_auto_fill_ignores_route_inserted_by_another_rerun(self):
+        rota = {
+            "rota": "R.30",
+            "destino": "ITAGUARA",
+            "observacao": "",
+        }
+        with (
+            mock.patch.object(services, "listar_rotas_para_data", return_value=[rota]),
+            mock.patch.object(services, "listar_rotas_suprimidas", return_value=set()),
+            mock.patch.object(
+                services,
+                "carregamento_existe_para_rota",
+                side_effect=[False, True],
+            ),
+            mock.patch.object(
+                services,
+                "salvar_carregamento",
+                side_effect=ValueError("Já existe um carregamento desta rota nesta data."),
+            ),
+        ):
+            self.assertEqual(
+                services.preencher_carregamentos_automaticos("2026-10-07"), 0
+            )
+
     def test_supporting_cadastros_crud_and_protected_route(self):
         caminhao_id = services.add_caminhao("abc-1d23", "Modelo A", "Novo")
         services.editar_caminhao(

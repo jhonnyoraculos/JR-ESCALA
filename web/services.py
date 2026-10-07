@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
+from threading import Lock
 from typing import Any, Iterable
 import os
 import re
@@ -64,6 +65,8 @@ OBS_MARCADORES = [
     ("Laranja", "#FFE0B2"),
 ]
 OBS_MARCADORES_MAP = {label: cor for label, cor in OBS_MARCADORES}
+
+_PREENCHIMENTO_AUTOMATICO_LOCK = Lock()
 
 DIAS_SEMANA = [
     ("segunda", "Segunda"),
@@ -2004,6 +2007,13 @@ def limpar_rotas_suprimidas(data_iso: str | None) -> None:
 
 
 def preencher_carregamentos_automaticos(data_iso: str, data_saida_iso: str | None = None) -> int:
+    with _PREENCHIMENTO_AUTOMATICO_LOCK:
+        return _preencher_carregamentos_automaticos(data_iso, data_saida_iso)
+
+
+def _preencher_carregamentos_automaticos(
+    data_iso: str, data_saida_iso: str | None = None
+) -> int:
     data_base = _normalizar_data_iso(data_iso)
     if not data_base:
         return 0
@@ -2040,6 +2050,12 @@ def preencher_carregamentos_automaticos(data_iso: str, data_saida_iso: str | Non
             inseridos += 1
         except DBError:
             continue
+        except ValueError:
+            # Outro rerun pode ter incluído a mesma rota entre a consulta e
+            # a gravação. Nesse caso, a carga automática já está concluída.
+            if carregamento_existe_para_rota(data_base, texto_rota):
+                continue
+            raise
     return inseridos
 
 
