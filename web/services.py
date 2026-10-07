@@ -289,29 +289,45 @@ def verificar_disponibilidade(data_iso: str, ignorar: dict[str, int] | None = No
         eventos = _safe_fetch(
             cur,
             """
-            SELECT 'ferias', id, colaborador_id, NULL, NULL, data_inicio, data_fim, NULL
+            SELECT CAST('ferias' AS TEXT), CAST(id AS BIGINT),
+                   CAST(colaborador_id AS BIGINT), CAST(NULL AS BIGINT),
+                   CAST(NULL AS TEXT), CAST(data_inicio AS TEXT),
+                   CAST(data_fim AS TEXT), CAST(NULL AS BIGINT)
             FROM ferias
             WHERE data_inicio <= ? AND data_fim >= ?
             UNION ALL
-            SELECT 'atestado', id, colaborador_id, NULL, NULL, data_inicio, data_fim, NULL
+            SELECT CAST('atestado' AS TEXT), CAST(id AS BIGINT),
+                   CAST(colaborador_id AS BIGINT), CAST(NULL AS BIGINT),
+                   CAST(NULL AS TEXT), CAST(data_inicio AS TEXT),
+                   CAST(data_fim AS TEXT), CAST(NULL AS BIGINT)
             FROM atestados
             WHERE data_inicio <= ? AND data_fim >= ?
             UNION ALL
-            SELECT 'folga', id, colaborador_id, NULL, NULL, data,
-                   COALESCE(data_fim, data), NULL
+            SELECT CAST('folga' AS TEXT), CAST(id AS BIGINT),
+                   CAST(colaborador_id AS BIGINT), CAST(NULL AS BIGINT),
+                   CAST(NULL AS TEXT), CAST(data AS TEXT),
+                   CAST(COALESCE(data_fim, data) AS TEXT), CAST(NULL AS BIGINT)
             FROM folgas
             WHERE data <= ? AND COALESCE(data_fim, data) >= ?
             UNION ALL
-            SELECT 'oficina', id, motorista_id, NULL, placa, data, data, NULL
+            SELECT CAST('oficina' AS TEXT), CAST(id AS BIGINT),
+                   CAST(motorista_id AS BIGINT), CAST(NULL AS BIGINT),
+                   CAST(placa AS TEXT), CAST(data AS TEXT), CAST(data AS TEXT),
+                   CAST(NULL AS BIGINT)
             FROM oficinas
             WHERE data = ?
             UNION ALL
-            SELECT 'escala_cd', id, motorista_id, ajudante_id, NULL, data, data, NULL
+            SELECT CAST('escala_cd' AS TEXT), CAST(id AS BIGINT),
+                   CAST(motorista_id AS BIGINT), CAST(ajudante_id AS BIGINT),
+                   CAST(NULL AS TEXT), CAST(data AS TEXT), CAST(data AS TEXT),
+                   CAST(NULL AS BIGINT)
             FROM escala_cd
             WHERE data = ?
             UNION ALL
-            SELECT 'bloqueio', id, colaborador_id, NULL, NULL, data_inicio, data_fim,
-                   carregamento_id
+            SELECT CAST('bloqueio' AS TEXT), CAST(id AS BIGINT),
+                   CAST(colaborador_id AS BIGINT), CAST(NULL AS BIGINT),
+                   CAST(NULL AS TEXT), CAST(data_inicio AS TEXT),
+                   CAST(data_fim AS TEXT), CAST(carregamento_id AS BIGINT)
             FROM bloqueios
             WHERE data_inicio <= ? AND data_fim >= ?
             """,
