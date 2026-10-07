@@ -919,6 +919,11 @@ def _period_status_cell(container, item: dict) -> None:
     )
 
 
+def _periodo_finalizado(item: dict) -> bool:
+    data_fim = svc.parse_date(item.get("data_fim"))
+    return bool(data_fim and data_fim < date.today())
+
+
 def _render_generated_download(
     state_key: str,
     widget_key: str,
@@ -3149,7 +3154,10 @@ def page_ferias() -> None:
             args=("ferias_edit_id", None), kwargs={"rerun": False},
         )
 
-    if registros:
+    def _render_ferias_lista(itens: list[dict], mensagem_vazia: str) -> None:
+        if not itens:
+            st.info(mensagem_vazia)
+            return
         col_sizes = [2.2, 1.2, 1.2, 2.2, 1.2, 2]
         header = st.columns(col_sizes)
         header[0].markdown('<div class="jr-head">Colaborador</div>', unsafe_allow_html=True)
@@ -3158,7 +3166,7 @@ def page_ferias() -> None:
         header[3].markdown('<div class="jr-head">Obs</div>', unsafe_allow_html=True)
         header[4].markdown('<div class="jr-head">Status</div>', unsafe_allow_html=True)
         header[5].markdown('<div class="jr-head">Ações</div>', unsafe_allow_html=True)
-        for item in registros:
+        for item in itens:
             cols = st.columns(col_sizes)
             _cell(cols[0], item.get("nome") or "-")
             _cell(cols[1], item.get("data_inicio") or "-", nowrap=True)
@@ -3197,8 +3205,16 @@ def page_ferias() -> None:
                     "Excluir", key=f"ferias_row_del_{item_id}", use_container_width=True,
                     on_click=_request_confirm, args=("ferias_confirm_excluir", item_id),
                 )
-    else:
-        st.info("Nenhum período de férias cadastrado.")
+
+    ferias_atuais = [item for item in registros if not _periodo_finalizado(item)]
+    ferias_registro = [item for item in registros if _periodo_finalizado(item)]
+    tab_atuais, tab_registro = st.tabs(
+        [f"Atuais ({len(ferias_atuais)})", f"Registro ({len(ferias_registro)})"]
+    )
+    with tab_atuais:
+        _render_ferias_lista(ferias_atuais, "Nenhum período de férias atual ou agendado.")
+    with tab_registro:
+        _render_ferias_lista(ferias_registro, "Nenhum período de férias finalizado.")
 
 
 def page_atestados() -> None:
@@ -3320,69 +3336,80 @@ def page_atestados() -> None:
             kwargs={"rerun": False},
         )
 
-    if not registros:
-        st.info("Nenhum atestado cadastrado.")
-        return
+    def _render_atestados_lista(itens: list[dict], mensagem_vazia: str) -> None:
+        if not itens:
+            st.info(mensagem_vazia)
+            return
 
-    col_sizes = [2.2, 1.15, 0.8, 1.15, 2.1, 1.15, 2]
-    header = st.columns(col_sizes)
-    header[0].markdown('<div class="jr-head">Colaborador</div>', unsafe_allow_html=True)
-    header[1].markdown('<div class="jr-head">Início</div>', unsafe_allow_html=True)
-    header[2].markdown('<div class="jr-head">Dias</div>', unsafe_allow_html=True)
-    header[3].markdown('<div class="jr-head">Até</div>', unsafe_allow_html=True)
-    header[4].markdown('<div class="jr-head">Observação</div>', unsafe_allow_html=True)
-    header[5].markdown('<div class="jr-head">Status</div>', unsafe_allow_html=True)
-    header[6].markdown('<div class="jr-head">Ações</div>', unsafe_allow_html=True)
-    for item in registros:
-        cols = st.columns(col_sizes)
-        _cell(cols[0], f"{item.get('nome') or '-'} ({item.get('funcao') or '-'})")
-        _cell(cols[1], item.get("data_inicio") or "-", nowrap=True)
-        _cell(cols[2], item.get("dias_ausencia") or "-", nowrap=True)
-        _cell(cols[3], item.get("data_fim") or "-", nowrap=True)
-        _cell(cols[4], item.get("observacao") or "-")
-        _period_status_cell(cols[5], item)
-        item_id = item.get("id")
-        if st.session_state.get("atestado_confirm_excluir") == item_id:
-            cols[6].caption("Excluir este atestado?")
-            confirm_cols = cols[6].columns(2)
-            if confirm_cols[0].button(
-                "Confirmar",
-                key=f"atestado_delete_yes_{item_id}",
-                use_container_width=True,
-            ):
-                try:
-                    svc.remover_atestado(item_id)
-                    _set_flash("success", "Atestado excluído e bloqueio removido.")
-                except Exception as exc:
-                    _set_flash("error", f"Erro ao excluir: {exc}")
-                st.session_state.pop("atestado_confirm_excluir", None)
-                _set_edit_target("atestado_edit_id", None, rerun=False)
-                _clear_cached_data()
-                st.rerun()
-            if confirm_cols[1].button(
-                "Cancelar",
-                key=f"atestado_delete_no_{item_id}",
-                use_container_width=True,
-            ):
-                st.session_state.pop("atestado_confirm_excluir", None)
-                st.rerun()
-        else:
-            action_cols = cols[6].columns(2)
-            action_cols[0].button(
-                "Editar",
-                key=f"atestado_row_edit_{item_id}",
-                use_container_width=True,
-                on_click=_set_edit_target,
-                args=("atestado_edit_id", item_id),
-                kwargs={"rerun": False},
-            )
-            action_cols[1].button(
-                "Excluir",
-                key=f"atestado_row_del_{item_id}",
-                use_container_width=True,
-                on_click=_request_confirm,
-                args=("atestado_confirm_excluir", item_id),
-            )
+        col_sizes = [2.2, 1.15, 0.8, 1.15, 2.1, 1.15, 2]
+        header = st.columns(col_sizes)
+        header[0].markdown('<div class="jr-head">Colaborador</div>', unsafe_allow_html=True)
+        header[1].markdown('<div class="jr-head">Início</div>', unsafe_allow_html=True)
+        header[2].markdown('<div class="jr-head">Dias</div>', unsafe_allow_html=True)
+        header[3].markdown('<div class="jr-head">Até</div>', unsafe_allow_html=True)
+        header[4].markdown('<div class="jr-head">Observação</div>', unsafe_allow_html=True)
+        header[5].markdown('<div class="jr-head">Status</div>', unsafe_allow_html=True)
+        header[6].markdown('<div class="jr-head">Ações</div>', unsafe_allow_html=True)
+        for item in itens:
+            cols = st.columns(col_sizes)
+            _cell(cols[0], f"{item.get('nome') or '-'} ({item.get('funcao') or '-'})")
+            _cell(cols[1], item.get("data_inicio") or "-", nowrap=True)
+            _cell(cols[2], item.get("dias_ausencia") or "-", nowrap=True)
+            _cell(cols[3], item.get("data_fim") or "-", nowrap=True)
+            _cell(cols[4], item.get("observacao") or "-")
+            _period_status_cell(cols[5], item)
+            item_id = item.get("id")
+            if st.session_state.get("atestado_confirm_excluir") == item_id:
+                cols[6].caption("Excluir este atestado?")
+                confirm_cols = cols[6].columns(2)
+                if confirm_cols[0].button(
+                    "Confirmar",
+                    key=f"atestado_delete_yes_{item_id}",
+                    use_container_width=True,
+                ):
+                    try:
+                        svc.remover_atestado(item_id)
+                        _set_flash("success", "Atestado excluído e bloqueio removido.")
+                    except Exception as exc:
+                        _set_flash("error", f"Erro ao excluir: {exc}")
+                    st.session_state.pop("atestado_confirm_excluir", None)
+                    _set_edit_target("atestado_edit_id", None, rerun=False)
+                    _clear_cached_data()
+                    st.rerun()
+                if confirm_cols[1].button(
+                    "Cancelar",
+                    key=f"atestado_delete_no_{item_id}",
+                    use_container_width=True,
+                ):
+                    st.session_state.pop("atestado_confirm_excluir", None)
+                    st.rerun()
+            else:
+                action_cols = cols[6].columns(2)
+                action_cols[0].button(
+                    "Editar",
+                    key=f"atestado_row_edit_{item_id}",
+                    use_container_width=True,
+                    on_click=_set_edit_target,
+                    args=("atestado_edit_id", item_id),
+                    kwargs={"rerun": False},
+                )
+                action_cols[1].button(
+                    "Excluir",
+                    key=f"atestado_row_del_{item_id}",
+                    use_container_width=True,
+                    on_click=_request_confirm,
+                    args=("atestado_confirm_excluir", item_id),
+                )
+
+    atestados_atuais = [item for item in registros if not _periodo_finalizado(item)]
+    atestados_registro = [item for item in registros if _periodo_finalizado(item)]
+    tab_atuais, tab_registro = st.tabs(
+        [f"Atuais ({len(atestados_atuais)})", f"Registro ({len(atestados_registro)})"]
+    )
+    with tab_atuais:
+        _render_atestados_lista(atestados_atuais, "Nenhum atestado atual ou agendado.")
+    with tab_registro:
+        _render_atestados_lista(atestados_registro, "Nenhum atestado finalizado.")
 
 
 def _render_lista_colaboradores(registros: list[dict], mensagem_vazia: str) -> None:
