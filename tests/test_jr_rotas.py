@@ -258,5 +258,73 @@ class SnapshotTests(unittest.TestCase):
         )
 
 
+class SyncThrottleTests(unittest.TestCase):
+    def setUp(self):
+        self.previous_sync_state = (
+            jr_rotas._LAST_SYNC_AT,
+            jr_rotas._LAST_SYNC_RESULT,
+            jr_rotas._LAST_SYNC_FAILURE_AT,
+            jr_rotas._LAST_SYNC_FAILURE,
+        )
+        jr_rotas._LAST_SYNC_AT = 0.0
+        jr_rotas._LAST_SYNC_RESULT = None
+        jr_rotas._LAST_SYNC_FAILURE_AT = 0.0
+        jr_rotas._LAST_SYNC_FAILURE = None
+
+    def tearDown(self):
+        (
+            jr_rotas._LAST_SYNC_AT,
+            jr_rotas._LAST_SYNC_RESULT,
+            jr_rotas._LAST_SYNC_FAILURE_AT,
+            jr_rotas._LAST_SYNC_FAILURE,
+        ) = self.previous_sync_state
+
+    def test_cached_sync_does_not_repeat_change_event(self):
+        with (
+            mock.patch.object(
+                jr_rotas,
+                "source_database_url",
+                return_value="postgresql://read-only",
+            ),
+            mock.patch.object(jr_rotas, "_fetch_source_routes", return_value=[{}]),
+            mock.patch.object(
+                jr_rotas,
+                "_apply_snapshot",
+                return_value=(1, 0, 0, 0),
+            ) as apply_snapshot,
+            mock.patch.object(jr_rotas.time, "monotonic", return_value=100.0),
+        ):
+            first = jr_rotas.sync_weekly_routes()
+            cached = jr_rotas.sync_weekly_routes()
+
+        self.assertTrue(first.checked)
+        self.assertTrue(first.changed)
+        self.assertFalse(cached.checked)
+        self.assertFalse(cached.changed)
+        self.assertEqual(cached.total, first.total)
+        apply_snapshot.assert_called_once()
+
+    def test_recent_sync_failure_is_not_retried_on_every_rerun(self):
+        with (
+            mock.patch.object(
+                jr_rotas,
+                "source_database_url",
+                return_value="postgresql://read-only",
+            ),
+            mock.patch.object(
+                jr_rotas,
+                "_fetch_source_routes",
+                side_effect=RuntimeError("offline"),
+            ) as fetch_routes,
+            mock.patch.object(jr_rotas.time, "monotonic", return_value=200.0),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "offline"):
+                jr_rotas.sync_weekly_routes()
+            with self.assertRaisesRegex(jr_rotas.JRRotasError, "temporariamente"):
+                jr_rotas.sync_weekly_routes()
+
+        fetch_routes.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

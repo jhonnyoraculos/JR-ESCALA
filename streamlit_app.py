@@ -1117,8 +1117,8 @@ def _cache_consultar_log_carregamentos(filtros_items: tuple[tuple[str, object], 
     return svc.consultar_log_carregamentos(dict(filtros_items))
 
 
-def _clear_cached_data() -> None:
-    for cached_function in (
+def _clear_cached_data(*selected_functions) -> None:
+    cached_functions = (
         _cache_listar_carregamentos,
         _cache_listar_colaboradores_por_funcao,
         _cache_listar_caminhoes_ativos,
@@ -1141,14 +1141,29 @@ def _clear_cached_data() -> None:
         _cache_listar_escala_cd,
         _cache_obter_escala_cd,
         _cache_consultar_log_carregamentos,
-    ):
+    )
+    for cached_function in selected_functions or cached_functions:
         cached_function.clear()
+
+
+def _clear_route_and_load_caches() -> None:
+    _clear_cached_data(
+        _cache_listar_rotas_semanais,
+        _cache_listar_carregamentos,
+        _cache_obter_carregamento,
+        _cache_disponibilidade,
+        _cache_listar_colaboradores_por_funcao,
+        _cache_consultar_log_carregamentos,
+    )
 
 
 @st.cache_resource(show_spinner=False)
 def _sync_initial_data_once() -> bool:
     svc.sincronizar_colaboradores_20261001()
     return True
+
+
+_DATABASE_SCHEMA_VERSION = "2026-10-07.2"
 
 
 def _database_error_hint(exc: Exception) -> str:
@@ -1174,9 +1189,12 @@ def _database_error_hint(exc: Exception) -> str:
 
 def _init_database_or_stop() -> None:
     try:
-        # A verificação de esquema não pode ficar em cache: o Streamlit pode
-        # reaproveitar o processo entre deploys que adicionam novas tabelas.
-        init_db()
+        # A checagem do esquema exige uma ida ao Neon. Ela só precisa ocorrer
+        # uma vez por sessão e volta a rodar quando a versão do esquema muda.
+        # Assim, trocar filtros/abas não paga esse custo repetidamente.
+        if st.session_state.get("_database_schema_version") != _DATABASE_SCHEMA_VERSION:
+            init_db()
+            st.session_state["_database_schema_version"] = _DATABASE_SCHEMA_VERSION
         _sync_initial_data_once()
     except Exception as exc:
         st.error("Não foi possível conectar ao banco de dados.")
@@ -1191,6 +1209,7 @@ def _init_database_or_stop() -> None:
             "A mensagem técnica completa continua disponível em Manage app → Logs."
         )
         if st.button("Tentar novamente", type="primary"):
+            st.session_state.pop("_database_schema_version", None)
             _sync_initial_data_once.clear()
             st.rerun()
         st.stop()
@@ -1244,7 +1263,7 @@ def page_carregamentos() -> None:
     try:
         sync_result = svc.sincronizar_rotas_jr()
         if sync_result.changed:
-            _clear_cached_data()
+            _clear_route_and_load_caches()
     except Exception:
         # Durante uma indisponibilidade da origem, conserva o último estado
         # válido em vez de remover ou substituir registros operacionais.
@@ -1288,7 +1307,7 @@ def page_carregamentos() -> None:
     registros = _cache_listar_carregamentos(data_iso)
     if not registros:
         svc.preencher_carregamentos_automaticos(data_iso, data_saida_iso)
-        _clear_cached_data()
+        _clear_route_and_load_caches()
         registros = _cache_listar_carregamentos(data_iso)
 
     for item in registros:
@@ -2508,7 +2527,7 @@ def page_rotas_semanais() -> None:
         try:
             sync_result = svc.sincronizar_rotas_jr()
             if sync_result.changed:
-                _clear_cached_data()
+                _clear_route_and_load_caches()
             st.caption(
                 f"Fonte oficial: JR Rotas · {sync_result.total} rotas · "
                 "sincronização automática a cada 5 minutos"

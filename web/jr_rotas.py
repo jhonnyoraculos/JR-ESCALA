@@ -19,6 +19,7 @@ from . import db
 
 SOURCE_NAME = "jr_rotas"
 SYNC_INTERVAL_SECONDS = 300
+SYNC_RETRY_SECONDS = 60
 OPEN_DATASET_URL = (
     "https://raw.githubusercontent.com/joaopbini/feriados-brasil/"
     "master/dados/feriados/municipal/json/{year}.json"
@@ -69,6 +70,27 @@ class HolidayAlert:
 _SYNC_LOCK = Lock()
 _LAST_SYNC_AT = 0.0
 _LAST_SYNC_RESULT: SyncResult | None = None
+_LAST_SYNC_FAILURE_AT = 0.0
+_LAST_SYNC_FAILURE: Exception | None = None
+
+
+def _cached_sync_result() -> SyncResult:
+    """Return the last snapshot without replaying its change notification.
+
+    ``changed`` is an event for the caller that performed the synchronization,
+    not a property that should be repeated during the whole throttle window.
+    Replaying it made Streamlit invalidate every data cache on each rerun for
+    five minutes after a real route update.
+    """
+    assert _LAST_SYNC_RESULT is not None
+    return SyncResult(
+        configured=_LAST_SYNC_RESULT.configured,
+        checked=False,
+        changed=False,
+        total=_LAST_SYNC_RESULT.total,
+        synced_at=_LAST_SYNC_RESULT.synced_at,
+        message=_LAST_SYNC_RESULT.message,
+    )
 
 
 def _secret(name: str) -> str | None:
@@ -485,7 +507,7 @@ def _apply_snapshot(routes: list[dict]) -> tuple[int, int, int, int]:
 
 
 def sync_weekly_routes(force: bool = False) -> SyncResult:
-    global _LAST_SYNC_AT, _LAST_SYNC_RESULT
+    global _LAST_SYNC_AT, _LAST_SYNC_RESULT, _LAST_SYNC_FAILURE_AT, _LAST_SYNC_FAILURE
 
     url = source_database_url()
     if not url:
@@ -496,7 +518,11 @@ def sync_weekly_routes(force: bool = False) -> SyncResult:
 
     now = time.monotonic()
     if not force and _LAST_SYNC_RESULT and now - _LAST_SYNC_AT < SYNC_INTERVAL_SECONDS:
-        return _LAST_SYNC_RESULT
+        return _cached_sync_result()
+    if not force and _LAST_SYNC_FAILURE and now - _LAST_SYNC_FAILURE_AT < SYNC_RETRY_SECONDS:
+        raise JRRotasError(
+            "JR Rotas temporariamente indisponível; uma nova tentativa será feita em instantes."
+        ) from _LAST_SYNC_FAILURE
 
     with _SYNC_LOCK:
         now = time.monotonic()
@@ -505,9 +531,22 @@ def sync_weekly_routes(force: bool = False) -> SyncResult:
             and _LAST_SYNC_RESULT
             and now - _LAST_SYNC_AT < SYNC_INTERVAL_SECONDS
         ):
-            return _LAST_SYNC_RESULT
-        routes = _fetch_source_routes(url)
-        added, updated, removed, cleaned_loads = _apply_snapshot(routes)
+            return _cached_sync_result()
+        if (
+            not force
+            and _LAST_SYNC_FAILURE
+            and now - _LAST_SYNC_FAILURE_AT < SYNC_RETRY_SECONDS
+        ):
+            raise JRRotasError(
+                "JR Rotas temporariamente indisponível; uma nova tentativa será feita em instantes."
+            ) from _LAST_SYNC_FAILURE
+        try:
+            routes = _fetch_source_routes(url)
+            added, updated, removed, cleaned_loads = _apply_snapshot(routes)
+        except Exception as exc:
+            _LAST_SYNC_FAILURE_AT = time.monotonic()
+            _LAST_SYNC_FAILURE = exc
+            raise
         result = SyncResult(
             configured=True,
             checked=True,
@@ -522,6 +561,8 @@ def sync_weekly_routes(force: bool = False) -> SyncResult:
         )
         _LAST_SYNC_AT = time.monotonic()
         _LAST_SYNC_RESULT = result
+        _LAST_SYNC_FAILURE_AT = 0.0
+        _LAST_SYNC_FAILURE = None
         return result
 
 

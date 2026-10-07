@@ -283,118 +283,84 @@ def verificar_disponibilidade(data_iso: str, ignorar: dict[str, int] | None = No
     with get_connection() as conn:
         cur = conn.cursor()
 
-        ajustes_atuais: dict[int, int] = {}
-        for car_id, duracao_nova in _safe_fetch(
+        # Todas as indisponibilidades simples chegam em uma única ida ao banco.
+        # No Neon, reduzir round-trips tem impacto maior do que micro-otimizações
+        # locais, especialmente na primeira abertura de cada data.
+        eventos = _safe_fetch(
             cur,
             """
-            SELECT a.carregamento_id, a.duracao_nova
-            FROM ajustes_rotas a
-            INNER JOIN (
-                SELECT carregamento_id, MAX(id) AS max_id
-                FROM ajustes_rotas
-                GROUP BY carregamento_id
-            ) ult
-            ON ult.carregamento_id = a.carregamento_id
-            AND ult.max_id = a.id
-            """,
-        ):
-            ajustes_atuais[car_id] = duracao_nova
-
-        for ferias_id, col_id, inicio, fim in _safe_fetch(
-            cur,
-            """
-            SELECT id, colaborador_id, data_inicio, data_fim
+            SELECT 'ferias', id, colaborador_id, NULL, NULL, data_inicio, data_fim, NULL
             FROM ferias
             WHERE data_inicio <= ? AND data_fim >= ?
-            """,
-            (data_iso, data_iso),
-        ):
-            if not col_id or ignorar.get("ferias_id") == ferias_id:
-                continue
-            d_inicio = parse_date(inicio)
-            d_fim = parse_date(fim)
-            if d_inicio and d_fim and d_inicio <= alvo <= d_fim:
-                resultado["motoristas"].add(col_id)
-                resultado["ajudantes"].add(col_id)
-
-        for atestado_id, col_id, inicio, fim in _safe_fetch(
-            cur,
-            """
-            SELECT id, colaborador_id, data_inicio, data_fim
+            UNION ALL
+            SELECT 'atestado', id, colaborador_id, NULL, NULL, data_inicio, data_fim, NULL
             FROM atestados
             WHERE data_inicio <= ? AND data_fim >= ?
-            """,
-            (data_iso, data_iso),
-        ):
-            if not col_id or ignorar.get("atestado_id") == atestado_id:
-                continue
-            d_inicio = parse_date(inicio)
-            d_fim = parse_date(fim)
-            if d_inicio and d_fim and d_inicio <= alvo <= d_fim:
-                resultado["motoristas"].add(col_id)
-                resultado["ajudantes"].add(col_id)
-
-        for folga_id, col_id in _safe_fetch(
-            cur,
-            """
-            SELECT id, colaborador_id
+            UNION ALL
+            SELECT 'folga', id, colaborador_id, NULL, NULL, data,
+                   COALESCE(data_fim, data), NULL
             FROM folgas
             WHERE data <= ? AND COALESCE(data_fim, data) >= ?
-            """,
-            (data_iso, data_iso),
-        ):
-            if not col_id or ignorar.get("folga_id") == folga_id:
-                continue
-            resultado["motoristas"].add(col_id)
-            resultado["ajudantes"].add(col_id)
-
-        for ofi_id, mot_id, placa in _safe_fetch(
-            cur,
-            "SELECT id, motorista_id, placa FROM oficinas WHERE data = ?",
-            (data_iso,),
-        ):
-            if ignorar.get("oficina_id") == ofi_id:
-                continue
-            if mot_id:
-                resultado["motoristas"].add(mot_id)
-                resultado["ajudantes"].add(mot_id)
-            if placa:
-                resultado["caminhoes"].add(placa.upper())
-
-        for escala_id, mot_id, aju_id in _safe_fetch(
-            cur,
-            "SELECT id, motorista_id, ajudante_id FROM escala_cd WHERE data = ?",
-            (data_iso,),
-        ):
-            if ignorar.get("escala_cd_id") == escala_id:
-                continue
-            if mot_id:
-                resultado["motoristas"].add(mot_id)
-                resultado["ajudantes"].add(mot_id)
-            if aju_id:
-                resultado["ajudantes"].add(aju_id)
-                resultado["motoristas"].add(aju_id)
-
-        for _, col_id, inicio, fim, car_id in _safe_fetch(
-            cur,
-            """
-            SELECT id, colaborador_id, data_inicio, data_fim, carregamento_id
+            UNION ALL
+            SELECT 'oficina', id, motorista_id, NULL, placa, data, data, NULL
+            FROM oficinas
+            WHERE data = ?
+            UNION ALL
+            SELECT 'escala_cd', id, motorista_id, ajudante_id, NULL, data, data, NULL
+            FROM escala_cd
+            WHERE data = ?
+            UNION ALL
+            SELECT 'bloqueio', id, colaborador_id, NULL, NULL, data_inicio, data_fim,
+                   carregamento_id
             FROM bloqueios
             WHERE data_inicio <= ? AND data_fim >= ?
             """,
-            (data_iso, data_iso),
-        ):
-            if not col_id:
+            (
+                data_iso,
+                data_iso,
+                data_iso,
+                data_iso,
+                data_iso,
+                data_iso,
+                data_iso,
+                data_iso,
+                data_iso,
+                data_iso,
+            ),
+        )
+        ignore_keys = {
+            "ferias": "ferias_id",
+            "atestado": "atestado_id",
+            "folga": "folga_id",
+            "oficina": "oficina_id",
+            "escala_cd": "escala_cd_id",
+        }
+        for tipo, item_id, pessoa_id, segunda_pessoa_id, placa, inicio, fim, car_id in eventos:
+            ignore_key = ignore_keys.get(tipo)
+            if ignore_key and ignorar.get(ignore_key) == item_id:
                 continue
-            if car_id:
-                if ignorar.get("carregamento_id") == car_id:
+            if tipo == "bloqueio" and car_id:
+                # Bloqueios de carregamentos são calculados abaixo a partir da
+                # duração vigente, inclusive quando houve ajuste posterior.
+                continue
+            if tipo == "bloqueio":
+                d_inicio = parse_date(inicio)
+                d_fim = parse_date(fim)
+                if not (d_inicio and d_fim and d_inicio <= alvo < d_fim):
                     continue
-                continue
-            d_inicio = parse_date(inicio)
-            d_fim = parse_date(fim)
-            if d_inicio and d_fim and d_inicio <= alvo < d_fim:
-                resultado["motoristas"].add(col_id)
-                resultado["ajudantes"].add(col_id)
+            elif tipo in {"ferias", "atestado"}:
+                d_inicio = parse_date(inicio)
+                d_fim = parse_date(fim)
+                if not (d_inicio and d_fim and d_inicio <= alvo <= d_fim):
+                    continue
+            if pessoa_id:
+                resultado["motoristas"].add(pessoa_id)
+                resultado["ajudantes"].add(pessoa_id)
+            if segunda_pessoa_id:
+                resultado["motoristas"].add(segunda_pessoa_id)
+                resultado["ajudantes"].add(segunda_pessoa_id)
+            if placa:
+                resultado["caminhoes"].add(placa.upper())
 
         for (
             car_id,
@@ -404,14 +370,27 @@ def verificar_disponibilidade(data_iso: str, ignorar: dict[str, int] | None = No
             aju_id,
             placa,
             observacao,
+            duracao_ajustada,
         ) in _safe_fetch(
             cur,
             """
-            SELECT id, data, data_saida, motorista_id, ajudante_id, placa, observacao
-            FROM carregamentos
-            WHERE data = ?
-               OR (data >= ? AND data <= ?)
-               OR (data_saida IS NOT NULL AND data_saida >= ? AND data_saida <= ?)
+            SELECT c.id, c.data, c.data_saida, c.motorista_id, c.ajudante_id,
+                   c.placa, c.observacao, ajuste.duracao_nova
+            FROM carregamentos c
+            LEFT JOIN (
+                SELECT a.carregamento_id, a.duracao_nova
+                FROM ajustes_rotas a
+                INNER JOIN (
+                    SELECT carregamento_id, MAX(id) AS max_id
+                    FROM ajustes_rotas
+                    GROUP BY carregamento_id
+                ) ult
+                ON ult.carregamento_id = a.carregamento_id
+                AND ult.max_id = a.id
+            ) ajuste ON ajuste.carregamento_id = c.id
+            WHERE c.data = ?
+               OR (c.data >= ? AND c.data <= ?)
+               OR (c.data_saida IS NOT NULL AND c.data_saida >= ? AND c.data_saida <= ?)
             """,
             (data_iso, janela_inicio, janela_fim, janela_inicio, janela_fim),
         ):
@@ -428,8 +407,10 @@ def verificar_disponibilidade(data_iso: str, ignorar: dict[str, int] | None = No
                 data_saida_dt = data_registro_dt + timedelta(days=dias_padrao)
             if data_saida_dt and data_registro_dt and data_saida_dt < data_registro_dt:
                 data_saida_dt = data_registro_dt
-            dias = ajustes_atuais.get(
-                car_id, OBSERVACAO_DURACAO.get((observacao or "").strip(), 0)
+            dias = (
+                duracao_ajustada
+                if duracao_ajustada is not None
+                else OBSERVACAO_DURACAO.get((observacao or "").strip(), 0)
             )
             if dias < 0:
                 continue
