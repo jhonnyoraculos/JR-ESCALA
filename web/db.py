@@ -345,8 +345,18 @@ def _postgres_schema_is_current(cur) -> bool:
                   AND table_name = 'rotas_semanais'
                   AND column_name = 'origem_id'
             )
-            AND to_regclass('fretados_caminhoes') IS NOT NULL
-            AND to_regclass('atestados') IS NOT NULL;
+            AND EXISTS (
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = current_schema()
+                  AND table_name = 'fretados_caminhoes'
+            )
+            AND EXISTS (
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = current_schema()
+                  AND table_name = 'atestados'
+            );
         """
     )
     row = cur.fetchone()

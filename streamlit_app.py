@@ -12,8 +12,6 @@ import streamlit as st
 from web import services as svc
 from web.db import LOGO_PATH, UPLOAD_DIR, database_connection_scope, init_db
 
-DATABASE_SCHEMA_VERSION = "2026-10-07-atestados-v1"
-
 NAV_ITEMS = [
     "Carregamentos",
     "Escala (CD)",
@@ -1075,11 +1073,7 @@ def _clear_cached_data() -> None:
 
 
 @st.cache_resource(show_spinner=False)
-def _init_database_with_fretados_once(schema_version: str) -> bool:
-    # O argumento versiona o cache e força novas migrações após cada mudança
-    # de esquema, mesmo quando o Streamlit reaproveita o processo do deploy.
-    del schema_version
-    init_db()
+def _sync_initial_data_once() -> bool:
     svc.sincronizar_colaboradores_20261001()
     return True
 
@@ -1107,7 +1101,10 @@ def _database_error_hint(exc: Exception) -> str:
 
 def _init_database_or_stop() -> None:
     try:
-        _init_database_with_fretados_once(DATABASE_SCHEMA_VERSION)
+        # A verificação de esquema não pode ficar em cache: o Streamlit pode
+        # reaproveitar o processo entre deploys que adicionam novas tabelas.
+        init_db()
+        _sync_initial_data_once()
     except Exception as exc:
         st.error("Não foi possível conectar ao banco de dados.")
         st.warning(_database_error_hint(exc))
@@ -1121,7 +1118,7 @@ def _init_database_or_stop() -> None:
             "A mensagem técnica completa continua disponível em Manage app → Logs."
         )
         if st.button("Tentar novamente", type="primary"):
-            _init_database_with_fretados_once.clear()
+            _sync_initial_data_once.clear()
             st.rerun()
         st.stop()
 
