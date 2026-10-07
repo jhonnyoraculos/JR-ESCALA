@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import base64
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import html
 import json
 from pathlib import Path
 import unicodedata
+from zoneinfo import ZoneInfo
 
 import streamlit as st
 
@@ -25,6 +26,12 @@ NAV_ITEMS = [
     "Colaboradores",
     "LOG",
 ]
+
+LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
+
+
+def _today_local() -> date:
+    return datetime.now(LOCAL_TIMEZONE).date()
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -2517,7 +2524,8 @@ def page_rotas_semanais() -> None:
     _apply_pending_edit_target("rota_edit_id")
     st.subheader("Rotas Semanais")
     dias = svc.DIAS_SEMANA
-    dia_default = dias[0][0]
+    hoje = _today_local()
+    dia_default = svc.obter_dia_semana_por_data(hoje.isoformat())
     dia_labels = [label for _, label in dias]
     dia_map = {label: chave for chave, label in dias}
     dia_inv = {chave: label for chave, label in dias}
@@ -2541,15 +2549,15 @@ def page_rotas_semanais() -> None:
     with holiday_base_col:
         data_rotas = st.date_input(
             "Data das rotas",
-            value=_to_date(st.session_state.get("carreg_data_iso")),
-            key="rotas_feriados_data_base",
+            value=hoje,
+            key="rotas_feriados_data_base_v2",
             help="Seleciona as rotas semanais correspondentes a este dia.",
         )
     with holiday_departure_col:
         data_saida_feriados = st.date_input(
             "Data saída",
-            value=_to_date(st.session_state.get("carreg_data_saida_iso")),
-            key="rotas_feriados_data_saida",
+            value=_to_date(svc.calcular_data_saida_carregamento(hoje.isoformat())),
+            key="rotas_feriados_data_saida_v2",
             help="A verificação começa na saída e considera toda a duração escolhida de cada rota.",
         )
     with action_col:
@@ -2606,8 +2614,22 @@ def page_rotas_semanais() -> None:
         for warning in holiday_warnings:
             st.caption(f"Aviso: {warning}")
 
+    data_rotas_iso = data_rotas.isoformat()
+    if st.session_state.get("rotas_dia_data_base_v2") != data_rotas_iso:
+        dia_da_data = svc.obter_dia_semana_por_data(data_rotas_iso)
+        st.session_state["rotas_dia_v2"] = dia_inv.get(
+            dia_da_data, dia_inv[dia_default]
+        )
+        st.session_state["rotas_dia_data_base_v2"] = data_rotas_iso
+    elif "rotas_dia_v2" not in st.session_state:
+        st.session_state["rotas_dia_v2"] = dia_inv[dia_default]
+
     prev_dia = st.session_state.get("rotas_dia_value")
-    dia_label = st.selectbox("Dia da semana", dia_labels, key="rotas_dia")
+    dia_label = st.selectbox(
+        "Dia da semana",
+        dia_labels,
+        key="rotas_dia_v2",
+    )
     dia = dia_map.get(dia_label, dia_default)
     if prev_dia and prev_dia != dia:
         _set_edit_target("rota_edit_id", None, rerun=False)
