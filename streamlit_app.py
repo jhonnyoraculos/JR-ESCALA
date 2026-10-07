@@ -63,7 +63,9 @@ def _inject_css() -> None:
       font-size: 15px;
     }
     * { font-family: "Sora", sans-serif; }
-    header, footer { visibility: hidden; }
+    header[data-testid="stHeader"], footer[data-testid="stFooter"] {
+      visibility: hidden;
+    }
     .topbar { margin-bottom: 12px; }
     .main .block-container {
       max-width: none;
