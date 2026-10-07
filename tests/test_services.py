@@ -352,6 +352,52 @@ class ServiceCrudTests(unittest.TestCase):
                 services.preencher_carregamentos_automaticos("2026-10-07"), 0
             )
 
+    def test_atestado_crud_blocks_the_complete_inclusive_period(self):
+        atestado_id = services.adicionar_atestado(
+            self.motorista,
+            "2026-10-07",
+            3,
+            "Repouso médico",
+        )
+        registro = next(
+            item for item in services.listar_atestados() if item["id"] == atestado_id
+        )
+        self.assertEqual(registro["data_fim"], "2026-10-09")
+        self.assertEqual(registro["dias_ausencia"], 3)
+
+        for data_bloqueada in ("2026-10-07", "2026-10-08", "2026-10-09"):
+            indisponiveis = services.verificar_disponibilidade(data_bloqueada)
+            self.assertIn(self.motorista, indisponiveis["motoristas"])
+            self.assertIn(self.motorista, indisponiveis["ajudantes"])
+        self.assertNotIn(
+            self.motorista,
+            services.verificar_disponibilidade("2026-10-10")["motoristas"],
+        )
+
+        with self.assertRaisesRegex(ValueError, "Já existe um atestado"):
+            services.adicionar_atestado(self.motorista, "2026-10-09", 2)
+
+        services.atualizar_atestado(
+            atestado_id,
+            self.motorista,
+            "2026-10-08",
+            2,
+            "Período corrigido",
+        )
+        atualizado = next(
+            item for item in services.listar_atestados() if item["id"] == atestado_id
+        )
+        self.assertEqual(atualizado["data_inicio"], "2026-10-08")
+        self.assertEqual(atualizado["data_fim"], "2026-10-09")
+        self.assertEqual(atualizado["observacao"], "Período corrigido")
+
+        services.remover_atestado(atestado_id)
+        self.assertEqual(services.listar_atestados(), [])
+        self.assertNotIn(
+            self.motorista,
+            services.verificar_disponibilidade("2026-10-08")["motoristas"],
+        )
+
     def test_supporting_cadastros_crud_and_protected_route(self):
         caminhao_id = services.add_caminhao("abc-1d23", "Modelo A", "Novo")
         services.editar_caminhao(

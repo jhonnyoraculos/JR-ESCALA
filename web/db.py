@@ -345,7 +345,8 @@ def _postgres_schema_is_current(cur) -> bool:
                   AND table_name = 'rotas_semanais'
                   AND column_name = 'origem_id'
             )
-            AND to_regclass('fretados_caminhoes') IS NOT NULL;
+            AND to_regclass('fretados_caminhoes') IS NOT NULL
+            AND to_regclass('atestados') IS NOT NULL;
         """
     )
     row = cur.fetchone()
@@ -392,6 +393,18 @@ def init_db() -> None:
                     id SERIAL PRIMARY KEY,
                     colaborador_id INTEGER NOT NULL REFERENCES colaboradores(id),
                     data_inicio TEXT NOT NULL,
+                    data_fim TEXT NOT NULL,
+                    observacao TEXT
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS atestados (
+                    id SERIAL PRIMARY KEY,
+                    colaborador_id INTEGER NOT NULL REFERENCES colaboradores(id),
+                    data_inicio TEXT NOT NULL,
+                    dias_ausencia INTEGER NOT NULL CHECK (dias_ausencia > 0),
                     data_fim TEXT NOT NULL,
                     observacao TEXT
                 );
@@ -528,6 +541,7 @@ def init_db() -> None:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_folgas_data ON folgas (data);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_folgas_data_saida ON folgas (data_saida);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ferias_periodo ON ferias (data_inicio, data_fim);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_atestados_periodo ON atestados (data_inicio, data_fim);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_oficinas_data ON oficinas (data);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_oficinas_data_saida ON oficinas (data_saida);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_escala_cd_data ON escala_cd (data);")
@@ -577,6 +591,19 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 colaborador_id INTEGER NOT NULL,
                 data_inicio TEXT NOT NULL,
+                data_fim TEXT NOT NULL,
+                observacao TEXT,
+                FOREIGN KEY(colaborador_id) REFERENCES colaboradores(id)
+            );
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS atestados (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                colaborador_id INTEGER NOT NULL,
+                data_inicio TEXT NOT NULL,
+                dias_ausencia INTEGER NOT NULL CHECK (dias_ausencia > 0),
                 data_fim TEXT NOT NULL,
                 observacao TEXT,
                 FOREIGN KEY(colaborador_id) REFERENCES colaboradores(id)
@@ -734,6 +761,7 @@ def init_db() -> None:
         cur.execute("CREATE INDEX IF NOT EXISTS idx_folgas_data ON folgas (data);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_folgas_data_saida ON folgas (data_saida);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_ferias_periodo ON ferias (data_inicio, data_fim);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_atestados_periodo ON atestados (data_inicio, data_fim);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_oficinas_data ON oficinas (data);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_oficinas_data_saida ON oficinas (data_saida);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_escala_cd_data ON escala_cd (data);")

@@ -20,6 +20,7 @@ NAV_ITEMS = [
     "Caminhões",
     "Fretados",
     "Férias",
+    "Atestados",
     "Colaboradores",
     "LOG",
 ]
@@ -801,6 +802,7 @@ _EDIT_FORM_PREFIXES = {
     "caminhao_edit_id": ("caminhao_form_",),
     "fretado_caminhao_edit_id": ("fretado_caminhao_form_",),
     "ferias_edit_id": ("ferias_form_",),
+    "atestado_edit_id": ("atestado_form_",),
 }
 
 
@@ -916,6 +918,7 @@ def _init_state() -> None:
     st.session_state.setdefault("caminhao_edit_id", None)
     st.session_state.setdefault("fretado_caminhao_edit_id", None)
     st.session_state.setdefault("ferias_edit_id", None)
+    st.session_state.setdefault("atestado_edit_id", None)
     st.session_state.setdefault("colab_edit_id", None)
 
 
@@ -996,6 +999,11 @@ def _cache_listar_ferias() -> list[dict]:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
+def _cache_listar_atestados() -> list[dict]:
+    return svc.listar_atestados()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
 def _cache_obter_carregamento(carregamento_id: int | None) -> dict | None:
     return svc.obter_carregamento(carregamento_id) if carregamento_id else None
 
@@ -1050,6 +1058,7 @@ def _clear_cached_data() -> None:
         _cache_listar_folgas,
         _cache_listar_folgas_por_data_saida,
         _cache_listar_ferias,
+        _cache_listar_atestados,
         _cache_obter_carregamento,
         _cache_listar_oficinas,
         _cache_listar_oficinas_por_data_saida,
@@ -3121,6 +3130,179 @@ def page_ferias() -> None:
         st.info("Nenhum período de férias cadastrado.")
 
 
+def page_atestados() -> None:
+    _apply_pending_edit_target("atestado_edit_id")
+    st.subheader("Atestados")
+    st.caption(
+        "O colaborador fica indisponível em todo o período informado, incluindo o último dia."
+    )
+    registros = _cache_listar_atestados()
+    colaboradores = _cache_listar_colaboradores(ativos_only=True)
+
+    edit_id = st.session_state.get("atestado_edit_id")
+    edit_item = next(
+        (item for item in registros if item.get("id") == edit_id),
+        None,
+    )
+
+    colab_opts = ["Selecionar colaborador"]
+    colab_map = {"Selecionar colaborador": None}
+    for colaborador in colaboradores:
+        label = (
+            f"{colaborador.get('nome')} ({colaborador.get('funcao')}) "
+            f"(#{colaborador.get('id')})"
+        )
+        colab_opts.append(label)
+        colab_map[label] = colaborador.get("id")
+
+    with st.form("atestado_form"):
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            colab_sel = "Selecionar colaborador"
+            if edit_item and edit_item.get("colaborador_id"):
+                for label, colaborador_id_opcao in colab_map.items():
+                    if colaborador_id_opcao == edit_item.get("colaborador_id"):
+                        colab_sel = label
+                        break
+            colab_label = st.selectbox(
+                "Colaborador",
+                colab_opts,
+                index=colab_opts.index(colab_sel),
+                key="atestado_form_colab",
+            )
+            colaborador_id = colab_map.get(colab_label)
+        with col_b:
+            data_inicio = st.date_input(
+                "Data inicial",
+                value=_to_date(
+                    edit_item.get("data_inicio")
+                    if edit_item
+                    else date.today().isoformat()
+                ),
+                key="atestado_form_inicio",
+            ).isoformat()
+        with col_c:
+            dias_ausencia = int(
+                st.number_input(
+                    "Dias de ausência",
+                    min_value=1,
+                    step=1,
+                    value=int(edit_item.get("dias_ausencia") or 1) if edit_item else 1,
+                    key="atestado_form_dias",
+                )
+            )
+        data_fim = svc.calcular_data_fim_atestado(data_inicio, dias_ausencia)
+        st.caption(f"Bloqueado até {svc.data_iso_para_br(data_fim)} (inclusive).")
+        observacao = st.text_input(
+            "Observação",
+            value=(edit_item.get("observacao") or "") if edit_item else "",
+            key="atestado_form_obs",
+        )
+        submit = st.form_submit_button("Atualizar" if edit_item else "Salvar")
+
+    if submit:
+        if not colaborador_id:
+            _set_flash("error", "Selecione o colaborador.")
+            st.rerun()
+        try:
+            if edit_item:
+                svc.atualizar_atestado(
+                    edit_id,
+                    colaborador_id,
+                    data_inicio,
+                    dias_ausencia,
+                    observacao,
+                )
+                _set_flash("success", "Atestado atualizado.")
+            else:
+                svc.adicionar_atestado(
+                    colaborador_id,
+                    data_inicio,
+                    dias_ausencia,
+                    observacao,
+                )
+                _set_flash("success", "Atestado salvo e colaborador bloqueado no período.")
+        except Exception as exc:
+            _set_flash("error", f"Erro ao salvar: {exc}")
+            st.rerun()
+        _set_edit_target("atestado_edit_id", None, rerun=False)
+        _clear_cached_data()
+        st.rerun()
+
+    if edit_item:
+        st.button(
+            "Cancelar edição",
+            key="atestado_cancelar",
+            on_click=_set_edit_target,
+            args=("atestado_edit_id", None),
+            kwargs={"rerun": False},
+        )
+
+    if not registros:
+        st.info("Nenhum atestado cadastrado.")
+        return
+
+    col_sizes = [2.2, 1.15, 0.8, 1.15, 2.1, 1.15, 2]
+    header = st.columns(col_sizes)
+    header[0].markdown('<div class="jr-head">Colaborador</div>', unsafe_allow_html=True)
+    header[1].markdown('<div class="jr-head">Início</div>', unsafe_allow_html=True)
+    header[2].markdown('<div class="jr-head">Dias</div>', unsafe_allow_html=True)
+    header[3].markdown('<div class="jr-head">Até</div>', unsafe_allow_html=True)
+    header[4].markdown('<div class="jr-head">Observação</div>', unsafe_allow_html=True)
+    header[5].markdown('<div class="jr-head">Status</div>', unsafe_allow_html=True)
+    header[6].markdown('<div class="jr-head">Ações</div>', unsafe_allow_html=True)
+    for item in registros:
+        cols = st.columns(col_sizes)
+        _cell(cols[0], f"{item.get('nome') or '-'} ({item.get('funcao') or '-'})")
+        _cell(cols[1], item.get("data_inicio") or "-", nowrap=True)
+        _cell(cols[2], item.get("dias_ausencia") or "-", nowrap=True)
+        _cell(cols[3], item.get("data_fim") or "-", nowrap=True)
+        _cell(cols[4], item.get("observacao") or "-")
+        _cell(cols[5], item.get("status") or "-", nowrap=True)
+        item_id = item.get("id")
+        if st.session_state.get("atestado_confirm_excluir") == item_id:
+            cols[6].caption("Excluir este atestado?")
+            confirm_cols = cols[6].columns(2)
+            if confirm_cols[0].button(
+                "Confirmar",
+                key=f"atestado_delete_yes_{item_id}",
+                use_container_width=True,
+            ):
+                try:
+                    svc.remover_atestado(item_id)
+                    _set_flash("success", "Atestado excluído e bloqueio removido.")
+                except Exception as exc:
+                    _set_flash("error", f"Erro ao excluir: {exc}")
+                st.session_state.pop("atestado_confirm_excluir", None)
+                _set_edit_target("atestado_edit_id", None, rerun=False)
+                _clear_cached_data()
+                st.rerun()
+            if confirm_cols[1].button(
+                "Cancelar",
+                key=f"atestado_delete_no_{item_id}",
+                use_container_width=True,
+            ):
+                st.session_state.pop("atestado_confirm_excluir", None)
+                st.rerun()
+        else:
+            action_cols = cols[6].columns(2)
+            action_cols[0].button(
+                "Editar",
+                key=f"atestado_row_edit_{item_id}",
+                use_container_width=True,
+                on_click=_set_edit_target,
+                args=("atestado_edit_id", item_id),
+                kwargs={"rerun": False},
+            )
+            action_cols[1].button(
+                "Excluir",
+                key=f"atestado_row_del_{item_id}",
+                use_container_width=True,
+                on_click=_request_confirm,
+                args=("atestado_confirm_excluir", item_id),
+            )
+
+
 def _render_lista_colaboradores(registros: list[dict], mensagem_vazia: str) -> None:
     if not registros:
         st.info(mensagem_vazia)
@@ -3698,6 +3880,8 @@ def _render_navigation() -> None:
             page_fretados()
         elif pagina == "Férias":
             page_ferias()
+        elif pagina == "Atestados":
+            page_atestados()
         elif pagina == "Colaboradores":
             page_colaboradores()
         elif pagina == "LOG":

@@ -317,6 +317,23 @@ def verificar_disponibilidade(data_iso: str, ignorar: dict[str, int] | None = No
                 resultado["motoristas"].add(col_id)
                 resultado["ajudantes"].add(col_id)
 
+        for atestado_id, col_id, inicio, fim in _safe_fetch(
+            cur,
+            """
+            SELECT id, colaborador_id, data_inicio, data_fim
+            FROM atestados
+            WHERE data_inicio <= ? AND data_fim >= ?
+            """,
+            (data_iso, data_iso),
+        ):
+            if not col_id or ignorar.get("atestado_id") == atestado_id:
+                continue
+            d_inicio = parse_date(inicio)
+            d_fim = parse_date(fim)
+            if d_inicio and d_fim and d_inicio <= alvo <= d_fim:
+                resultado["motoristas"].add(col_id)
+                resultado["ajudantes"].add(col_id)
+
         for folga_id, col_id in _safe_fetch(
             cur,
             """
@@ -506,6 +523,7 @@ def _excluir_colaborador_com_cursor(cur, colaborador_id: int) -> None:
     cur.execute("DELETE FROM fretados_caminhoes WHERE colaborador_id = ?;", (colaborador_id,))
     cur.execute("DELETE FROM folgas WHERE colaborador_id = ?;", (colaborador_id,))
     cur.execute("DELETE FROM ferias WHERE colaborador_id = ?;", (colaborador_id,))
+    cur.execute("DELETE FROM atestados WHERE colaborador_id = ?;", (colaborador_id,))
     cur.execute("DELETE FROM bloqueios WHERE colaborador_id = ?;", (colaborador_id,))
     cur.execute("UPDATE carregamentos SET motorista_id = NULL WHERE motorista_id = ?;", (colaborador_id,))
     cur.execute("UPDATE carregamentos SET ajudante_id = NULL WHERE ajudante_id = ?;", (colaborador_id,))
@@ -530,6 +548,7 @@ def _mesclar_colaborador_com_cursor(cur, origem_id: int, destino_id: int) -> Non
     )
     cur.execute("UPDATE folgas SET colaborador_id = ? WHERE colaborador_id = ?;", (destino_id, origem_id))
     cur.execute("UPDATE ferias SET colaborador_id = ? WHERE colaborador_id = ?;", (destino_id, origem_id))
+    cur.execute("UPDATE atestados SET colaborador_id = ? WHERE colaborador_id = ?;", (destino_id, origem_id))
     cur.execute("UPDATE bloqueios SET colaborador_id = ? WHERE colaborador_id = ?;", (destino_id, origem_id))
     cur.execute("UPDATE carregamentos SET motorista_id = ? WHERE motorista_id = ?;", (destino_id, origem_id))
     cur.execute("UPDATE carregamentos SET ajudante_id = ? WHERE ajudante_id = ?;", (destino_id, origem_id))
@@ -740,6 +759,7 @@ def excluir_colaborador(colaborador_id: int) -> str | None:
         cur.execute("DELETE FROM fretados_caminhoes WHERE colaborador_id = ?;", (colaborador_id,))
         cur.execute("DELETE FROM folgas WHERE colaborador_id = ?;", (colaborador_id,))
         cur.execute("DELETE FROM ferias WHERE colaborador_id = ?;", (colaborador_id,))
+        cur.execute("DELETE FROM atestados WHERE colaborador_id = ?;", (colaborador_id,))
         cur.execute("DELETE FROM bloqueios WHERE colaborador_id = ?;", (colaborador_id,))
         cur.execute("UPDATE carregamentos SET motorista_id = NULL WHERE motorista_id = ?;", (colaborador_id,))
         cur.execute("UPDATE carregamentos SET ajudante_id = NULL WHERE ajudante_id = ?;", (colaborador_id,))
@@ -1305,6 +1325,150 @@ def listar_ferias() -> list[dict]:
         else:
             item["status"] = "Em andamento"
             item["status_class"] = "warn"
+    return registros
+
+
+# Atestados
+
+
+def calcular_data_fim_atestado(data_inicio: str, dias_ausencia: int) -> str:
+    inicio = parse_date(data_inicio)
+    if not inicio:
+        raise ValueError("Informe uma data inicial válida.")
+    try:
+        dias = int(dias_ausencia)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("A quantidade de dias deve ser um número inteiro.") from exc
+    if dias < 1:
+        raise ValueError("A quantidade de dias deve ser maior que zero.")
+    return (inicio + timedelta(days=dias - 1)).isoformat()
+
+
+def adicionar_atestado(
+    colaborador_id: int,
+    data_inicio: str,
+    dias_ausencia: int,
+    observacao: str | None = None,
+) -> int:
+    data_fim = calcular_data_fim_atestado(data_inicio, dias_ausencia)
+    observacao_db = (observacao or "").strip() or None
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT 1
+            FROM atestados
+            WHERE colaborador_id = ?
+              AND data_inicio <= ?
+              AND data_fim >= ?
+            LIMIT 1;
+            """,
+            (colaborador_id, data_fim, data_inicio),
+        )
+        if cur.fetchone() is not None:
+            raise ValueError("Já existe um atestado deste colaborador nesse período.")
+        novo_id = insert_and_get_id(
+            cur,
+            """
+            INSERT INTO atestados (
+                colaborador_id, data_inicio, dias_ausencia, data_fim, observacao
+            )
+            VALUES (?, ?, ?, ?, ?);
+            """,
+            (colaborador_id, data_inicio, int(dias_ausencia), data_fim, observacao_db),
+        )
+        conn.commit()
+        return novo_id
+
+
+def atualizar_atestado(
+    registro_id: int,
+    colaborador_id: int,
+    data_inicio: str,
+    dias_ausencia: int,
+    observacao: str | None = None,
+) -> None:
+    data_fim = calcular_data_fim_atestado(data_inicio, dias_ausencia)
+    observacao_db = (observacao or "").strip() or None
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT 1
+            FROM atestados
+            WHERE colaborador_id = ?
+              AND data_inicio <= ?
+              AND data_fim >= ?
+              AND id <> ?
+            LIMIT 1;
+            """,
+            (colaborador_id, data_fim, data_inicio, registro_id),
+        )
+        if cur.fetchone() is not None:
+            raise ValueError("Já existe um atestado deste colaborador nesse período.")
+        cur.execute(
+            """
+            UPDATE atestados
+            SET colaborador_id = ?,
+                data_inicio = ?,
+                dias_ausencia = ?,
+                data_fim = ?,
+                observacao = ?
+            WHERE id = ?;
+            """,
+            (
+                colaborador_id,
+                data_inicio,
+                int(dias_ausencia),
+                data_fim,
+                observacao_db,
+                registro_id,
+            ),
+        )
+        if cur.rowcount == 0:
+            raise ValueError("Atestado não encontrado. Atualize a página e tente novamente.")
+        conn.commit()
+
+
+def remover_atestado(registro_id: int) -> None:
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM atestados WHERE id = ?;", (registro_id,))
+        conn.commit()
+
+
+def listar_atestados() -> list[dict]:
+    with get_connection(dict_rows=True) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT a.id,
+                   a.colaborador_id,
+                   c.nome,
+                   c.funcao,
+                   a.data_inicio,
+                   a.dias_ausencia,
+                   a.data_fim,
+                   a.observacao
+            FROM atestados a
+            INNER JOIN colaboradores c ON c.id = a.colaborador_id
+            ORDER BY a.data_inicio DESC, c.nome;
+            """
+        )
+        registros = [dict(row) for row in cur.fetchall()]
+    hoje = date.today()
+    for item in registros:
+        inicio = parse_date(item.get("data_inicio"))
+        fim = parse_date(item.get("data_fim"))
+        if inicio and inicio > hoje:
+            item["status"] = "Agendado"
+            item["status_class"] = "warn"
+        elif fim and fim < hoje:
+            item["status"] = "Finalizado"
+            item["status_class"] = "ok"
+        else:
+            item["status"] = "Em andamento"
+            item["status_class"] = "danger"
     return registros
 
 # Bloqueios
