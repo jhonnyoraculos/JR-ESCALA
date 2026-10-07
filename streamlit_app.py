@@ -2537,13 +2537,20 @@ def page_rotas_semanais() -> None:
     else:
         st.caption("Integração com JR Rotas aguardando a configuração protegida do banco de origem.")
 
-    holiday_col, action_col = st.columns([3, 1])
-    with holiday_col:
-        semana_referencia = st.date_input(
-            "Semana de referência",
-            value=date.today(),
-            key="rotas_feriados_semana",
-            help="A verificação considera a semana desta data e todo o período de cada viagem.",
+    holiday_base_col, holiday_departure_col, action_col = st.columns([2, 2, 1])
+    with holiday_base_col:
+        data_rotas = st.date_input(
+            "Data das rotas",
+            value=_to_date(st.session_state.get("carreg_data_iso")),
+            key="rotas_feriados_data_base",
+            help="Seleciona as rotas semanais correspondentes a este dia.",
+        )
+    with holiday_departure_col:
+        data_saida_feriados = st.date_input(
+            "Data saída",
+            value=_to_date(st.session_state.get("carreg_data_saida_iso")),
+            key="rotas_feriados_data_saida",
+            help="A verificação começa na saída e considera toda a duração escolhida de cada rota.",
         )
     with action_col:
         st.write("")
@@ -2555,13 +2562,12 @@ def page_rotas_semanais() -> None:
             help="A consulta só é realizada quando este botão é acionado.",
         )
 
-    semana_inicio = semana_referencia - timedelta(days=semana_referencia.weekday())
-    holiday_key = semana_inicio.isoformat()
+    holiday_key = f"{data_rotas.isoformat()}:{data_saida_feriados.isoformat()}"
     if verificar_feriados:
         try:
             with st.spinner("Verificando feriados aplicáveis às rotas..."):
                 holiday_alerts, holiday_warnings = svc.verificar_feriados_rotas_semanais(
-                    semana_referencia
+                    data_rotas, data_saida_feriados
                 )
             st.session_state["rotas_feriados_resultado"] = {
                 "key": holiday_key,
@@ -2581,7 +2587,7 @@ def page_rotas_semanais() -> None:
         holiday_warnings = holiday_result.get("warnings", [])
         if holiday_alerts:
             with st.expander(
-                f"{len(holiday_alerts)} aviso(s) de feriado nesta semana",
+                f"{len(holiday_alerts)} aviso(s) de feriado nas viagens",
                 expanded=True,
             ):
                 for alert in holiday_alerts:
@@ -2596,7 +2602,7 @@ def page_rotas_semanais() -> None:
                         f"{alert.route_code} — {alert.destination} ({periodo})"
                     )
         elif not holiday_warnings:
-            st.caption("Nenhum feriado aplicável às rotas dessa semana.")
+            st.caption("Nenhum feriado aplicável às rotas e períodos informados.")
         for warning in holiday_warnings:
             st.caption(f"Aviso: {warning}")
 

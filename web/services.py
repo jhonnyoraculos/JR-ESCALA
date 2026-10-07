@@ -1990,39 +1990,51 @@ def sincronizar_rotas_jr(force: bool = False):
     return sync_weekly_routes(force=force)
 
 
-def verificar_feriados_rotas_semanais(data_referencia: date):
+def verificar_feriados_rotas_semanais(
+    data_referencia: date, data_saida_padrao: date | None = None
+):
     from .jr_rotas import verify_route_holidays
 
-    rotas = listar_todas_rotas_semanais()
-    inicio = data_referencia - timedelta(days=data_referencia.weekday())
-    fim = inicio + timedelta(days=6)
+    data_base_iso = data_referencia.isoformat()
+    dia_semana = obter_dia_semana_por_data(data_base_iso)
+    rotas = listar_rotas_semanais(dia_semana)
     with get_connection(dict_rows=True) as conn:
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT data, rota, observacao
+            SELECT data, data_saida, rota, observacao
             FROM carregamentos
-            WHERE data >= ? AND data <= ?;
+            WHERE data = ?;
             """,
-            (inicio.isoformat(), fim.isoformat()),
+            (data_base_iso,),
         )
         carregamentos = [dict(row) for row in cur.fetchall()]
 
-    indice_dias = {chave: indice for indice, (chave, _) in enumerate(DIAS_SEMANA)}
+    def codigo_rota(valor: str | None) -> str:
+        match = re.search(r"\bR\s*\.\s*(\d+)\b", valor or "", re.IGNORECASE)
+        if match is None:
+            match = re.match(r"\s*(\d+)\b", valor or "")
+        return f"R.{int(match.group(1))}" if match else ""
+
+    carregamentos_por_rota = {
+        codigo_rota(item.get("rota")): item
+        for item in carregamentos
+        if codigo_rota(item.get("rota"))
+    }
+    saida_fallback = data_saida_padrao or date.fromisoformat(
+        calcular_data_saida_carregamento(data_base_iso) or data_base_iso
+    )
     for rota in rotas:
-        dia_indice = indice_dias.get(rota.get("dia_semana"))
-        codigo = (rota.get("rota") or "").strip()
-        if dia_indice is None or not codigo:
-            continue
-        data_rota = (inicio + timedelta(days=dia_indice)).isoformat()
-        codigo_normalizado = re.sub(r"\s+", "", codigo).upper()
-        for carregamento in carregamentos:
-            texto_rota = re.sub(r"\s+", "", carregamento.get("rota") or "").upper()
-            if carregamento.get("data") == data_rota and codigo_normalizado in texto_rota:
-                observacao = (carregamento.get("observacao") or "").strip()
-                if observacao:
-                    rota["observacao"] = observacao
-                break
+        carregamento = carregamentos_por_rota.get(codigo_rota(rota.get("rota")))
+        if carregamento:
+            observacao = (carregamento.get("observacao") or "").strip()
+            if observacao:
+                rota["observacao"] = observacao
+            rota["data_saida"] = (
+                parse_date(carregamento.get("data_saida")) or saida_fallback
+            ).isoformat()
+        else:
+            rota["data_saida"] = saida_fallback.isoformat()
 
     return verify_route_holidays(rotas, data_referencia)
 

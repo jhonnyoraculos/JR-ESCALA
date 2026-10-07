@@ -693,10 +693,19 @@ def verify_route_holidays(
     city_keys: set[str] = set()
 
     for route in route_list:
-        weekday = WEEKDAY_NUMBERS.get(_clean_text(route.get("dia_semana")).casefold())
-        if weekday is None:
-            continue
-        departure = monday + timedelta(days=weekday)
+        departure_value = route.get("data_saida") or route.get("departure_date")
+        if departure_value:
+            try:
+                departure = _parse_date(departure_value)
+            except (TypeError, ValueError):
+                continue
+        else:
+            weekday = WEEKDAY_NUMBERS.get(
+                _clean_text(route.get("dia_semana")).casefold()
+            )
+            if weekday is None:
+                continue
+            departure = monday + timedelta(days=weekday)
         duration = trip_duration_days(route.get("observacao"))
         return_date = departure + timedelta(days=duration - 1)
         cities = _decode_cities(route)

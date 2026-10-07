@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest import mock
 
@@ -375,6 +376,37 @@ class ServiceCrudTests(unittest.TestCase):
             self.assertEqual(
                 services.preencher_carregamentos_automaticos("2026-10-07"), 0
             )
+
+    def test_holiday_check_uses_selected_routes_and_actual_departure(self):
+        services.adicionar_rota_semana(
+            "quarta", "R.71", "VARGINHA", "ROTA 1 DIA (BATE E VOLTA)"
+        )
+        services.adicionar_rota_semana(
+            "quinta", "R.600", "PEDRO LEOPOLDO", "ROTA 1 DIA (BATE E VOLTA)"
+        )
+        services.salvar_carregamento(
+            "2026-10-07",
+            "R.71 - VARGINHA",
+            None,
+            None,
+            None,
+            "ROTA 3 DIAS",
+            data_saida="2026-10-08",
+        )
+
+        with mock.patch.object(
+            jr_rotas, "verify_route_holidays", return_value=([], [])
+        ) as verify:
+            services.verificar_feriados_rotas_semanais(
+                date(2026, 10, 7), date(2026, 10, 8)
+            )
+
+        rotas, referencia = verify.call_args.args
+        self.assertEqual(referencia, date(2026, 10, 7))
+        self.assertEqual(len(rotas), 1)
+        self.assertEqual(rotas[0]["rota"], "R.71")
+        self.assertEqual(rotas[0]["data_saida"], "2026-10-08")
+        self.assertEqual(rotas[0]["observacao"], "ROTA 3 DIAS")
 
     def test_atestado_crud_blocks_the_complete_inclusive_period(self):
         atestado_id = services.adicionar_atestado(

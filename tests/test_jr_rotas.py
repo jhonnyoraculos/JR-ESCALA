@@ -73,6 +73,45 @@ class TripDurationTests(unittest.TestCase):
         self.assertEqual(alerts[0].holiday_date, date(2026, 9, 30))
         self.assertEqual(alerts[0].return_date, date(2026, 9, 30))
 
+    def test_explicit_departure_date_overrides_weekday_date(self):
+        routes = [
+            {
+                "id": 1,
+                "dia_semana": "quarta",
+                "rota": "R.71",
+                "destino": "Varginha",
+                "observacao": "ROTA 2 DIAS",
+                "data_saida": "2026-10-08",
+                "cidades": [
+                    {
+                        "city_original": "Varginha",
+                        "municipality_name": "Varginha",
+                        "state": "MG",
+                        "ibge_code": "3170701",
+                    }
+                ],
+            }
+        ]
+        municipal = {
+            "3170701": (
+                {"date": date(2026, 10, 7), "name": "Dia anterior", "type": "Municipal"},
+                {"date": date(2026, 10, 9), "name": "Durante a viagem", "type": "Municipal"},
+            )
+        }
+        with (
+            mock.patch.object(jr_rotas, "_general_holidays", return_value=()),
+            mock.patch.object(jr_rotas, "_municipal_dataset", return_value=municipal),
+            mock.patch.object(jr_rotas, "source_database_url", return_value=None),
+        ):
+            alerts, warnings = jr_rotas.verify_route_holidays(
+                routes, date(2026, 10, 7)
+            )
+
+        self.assertFalse(warnings)
+        self.assertEqual([alert.holiday_date for alert in alerts], [date(2026, 10, 9)])
+        self.assertEqual(alerts[0].departure_date, date(2026, 10, 8))
+        self.assertEqual(alerts[0].return_date, date(2026, 10, 9))
+
     def test_source_uses_official_template_and_main_route_name(self):
         connection = mock.MagicMock()
         connection.__enter__.return_value = connection
