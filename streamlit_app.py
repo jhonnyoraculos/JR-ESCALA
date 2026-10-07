@@ -3175,7 +3175,7 @@ def page_atestados() -> None:
             )
             colaborador_id = colab_map.get(colab_label)
         with col_b:
-            data_inicio = st.date_input(
+            data_inicio_valor = st.date_input(
                 "Data inicial",
                 value=_to_date(
                     edit_item.get("data_inicio")
@@ -3183,19 +3183,27 @@ def page_atestados() -> None:
                     else date.today().isoformat()
                 ),
                 key="atestado_form_inicio",
-            ).isoformat()
-        with col_c:
-            dias_ausencia = int(
-                st.number_input(
-                    "Dias de ausência",
-                    min_value=1,
-                    step=1,
-                    value=int(edit_item.get("dias_ausencia") or 1) if edit_item else 1,
-                    key="atestado_form_dias",
-                )
             )
-        data_fim = svc.calcular_data_fim_atestado(data_inicio, dias_ausencia)
-        st.caption(f"Bloqueado até {svc.data_iso_para_br(data_fim)} (inclusive).")
+        with col_c:
+            data_fim_valor = st.date_input(
+                "Data fim",
+                value=_to_date(
+                    edit_item.get("data_fim")
+                    if edit_item
+                    else data_inicio_valor.isoformat()
+                ),
+                key="atestado_form_fim",
+            )
+        data_inicio = data_inicio_valor.isoformat()
+        data_fim = data_fim_valor.isoformat()
+        dias_ausencia = (data_fim_valor - data_inicio_valor).days + 1
+        if dias_ausencia > 0:
+            st.caption(
+                f"Período de {dias_ausencia} dia(s). Bloqueado até "
+                f"{svc.data_iso_para_br(data_fim)} (inclusive)."
+            )
+        else:
+            st.error("A data final não pode ser anterior à data inicial.")
         observacao = st.text_input(
             "Observação",
             value=(edit_item.get("observacao") or "") if edit_item else "",
@@ -3206,6 +3214,9 @@ def page_atestados() -> None:
     if submit:
         if not colaborador_id:
             _set_flash("error", "Selecione o colaborador.")
+            st.rerun()
+        if dias_ausencia < 1:
+            _set_flash("error", "A data final não pode ser anterior à data inicial.")
             st.rerun()
         try:
             if edit_item:
