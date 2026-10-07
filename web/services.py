@@ -638,12 +638,17 @@ def adicionar_fretado(
     placa: str = "",
     modelo: str = "",
     observacao_caminhao: str = "",
+    caminhao_existente_id: int | None = None,
 ) -> tuple[int, int | None]:
     nome_limpo = " ".join((nome or "").strip().split())
     if not nome_limpo:
         raise ValueError("Informe o nome do fretado.")
 
     placa_db = (placa or "").strip().upper()
+    if caminhao_existente_id and (
+        placa_db or (modelo or "").strip() or (observacao_caminhao or "").strip()
+    ):
+        raise ValueError("Escolha um caminhão existente ou cadastre um novo, não os dois.")
     if not placa_db and ((modelo or "").strip() or (observacao_caminhao or "").strip()):
         raise ValueError("Informe a placa para cadastrar os dados do caminhão.")
 
@@ -668,6 +673,18 @@ def adicionar_fretado(
                 raise ValueError(
                     "Esta placa já está cadastrada. Use a opção de vincular caminhão existente."
                 )
+        elif caminhao_existente_id:
+            cur.execute(
+                """
+                SELECT cam.id
+                FROM caminhoes cam
+                LEFT JOIN fretados_caminhoes fc ON fc.caminhao_id = cam.id
+                WHERE cam.id = ? AND cam.ativo = 1 AND fc.caminhao_id IS NULL;
+                """,
+                (caminhao_existente_id,),
+            )
+            if not cur.fetchone():
+                raise ValueError("Este caminhão não está disponível na frota comum.")
 
         colaborador_id = insert_and_get_id(
             cur,
@@ -677,13 +694,14 @@ def adicionar_fretado(
             """,
             (nome_db,),
         )
-        caminhao_id = None
+        caminhao_id = int(caminhao_existente_id) if caminhao_existente_id else None
         if placa_db:
             caminhao_id = insert_and_get_id(
                 cur,
                 "INSERT INTO caminhoes (placa, modelo, observacao, ativo) VALUES (?, ?, ?, 1);",
                 (placa_db, (modelo or "").strip(), (observacao_caminhao or "").strip()),
             )
+        if caminhao_id is not None:
             cur.execute(
                 "INSERT INTO fretados_caminhoes (colaborador_id, caminhao_id) VALUES (?, ?);",
                 (colaborador_id, caminhao_id),

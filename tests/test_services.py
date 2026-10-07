@@ -246,6 +246,30 @@ class ServiceCrudTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "já está cadastrado"):
             services.adicionar_fretado("transportes  silva")
 
+        caminhao_existente_id = services.add_caminhao(
+            "GER-7C89", "Caminhão da frota", "Disponível"
+        )
+        fretado_existente_id, caminhao_movido_id = services.adicionar_fretado(
+            "Parceiro com veículo existente",
+            caminhao_existente_id=caminhao_existente_id,
+        )
+        self.assertEqual(caminhao_movido_id, caminhao_existente_id)
+        self.assertEqual(
+            services.obter_caminhao_fretado(fretado_existente_id)["id"],
+            caminhao_existente_id,
+        )
+        self.assertNotIn(
+            caminhao_existente_id,
+            [item["id"] for item in services.listar_caminhoes_gerais()],
+        )
+
+        with self.assertRaisesRegex(ValueError, "não os dois"):
+            services.adicionar_fretado(
+                "Parceiro inválido",
+                "NOV-1A23",
+                caminhao_existente_id=caminhao_existente_id,
+            )
+
     def test_oficina_edit_persists_changed_date_and_delete(self):
         oficina_id = services.salvar_oficina(
             "2026-10-01",

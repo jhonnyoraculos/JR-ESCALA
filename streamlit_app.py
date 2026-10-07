@@ -2729,10 +2729,9 @@ def page_rotas_semanais() -> None:
 def page_caminhoes() -> None:
     _apply_pending_edit_target("caminhao_edit_id")
     st.subheader("Caminhões")
-    # Exibe toda a frota para consulta e manutenção, inclusive os caminhões
-    # exclusivos dos fretados. A seleção nos carregamentos continua usando
-    # apenas _cache_listar_caminhoes_ativos(), que exclui esses veículos.
-    registros = _cache_listar_caminhoes(ativos_only=False)
+    # Caminhões vinculados a fretados são exclusivos e ficam visíveis apenas
+    # na aba Fretados.
+    registros = _cache_listar_caminhoes_gerais(ativos_only=False)
 
     edit_id = st.session_state.get("caminhao_edit_id")
     edit_item = None
@@ -2854,20 +2853,40 @@ def page_fretados() -> None:
     if st.session_state.pop("fretado_reset_create_form", False):
         _clear_widget_state(("fretado_new_",))
 
+    caminhoes_frota = _cache_listar_caminhoes_gerais(ativos_only=True)
+    caminhoes_frota_ids = [None] + [int(item["id"]) for item in caminhoes_frota]
+    caminhoes_frota_labels = {
+        int(item["id"]): " - ".join(
+            parte
+            for parte in (item.get("placa") or "", item.get("modelo") or "")
+            if parte
+        )
+        for item in caminhoes_frota
+    }
+
     st.markdown("#### Adicionar fretado")
     with st.form("fretado_create_form"):
         create_a, create_b = st.columns(2)
         with create_a:
             novo_nome = st.text_input("Nome do fretado", key="fretado_new_nome")
         with create_b:
+            caminhao_existente_id = st.selectbox(
+                "Trazer caminhão da frota (opcional)",
+                caminhoes_frota_ids,
+                format_func=lambda item_id: caminhoes_frota_labels.get(
+                    item_id, "Não usar caminhão existente"
+                ),
+                key="fretado_new_caminhao_existente",
+            )
+        create_c, create_d, create_e = st.columns(3)
+        with create_c:
             nova_placa = st.text_input(
-                "Placa do caminhão exclusivo (opcional)",
+                "Ou cadastrar nova placa (opcional)",
                 key="fretado_new_placa",
             )
-        create_c, create_d = st.columns(2)
-        with create_c:
-            novo_modelo = st.text_input("Modelo do caminhão", key="fretado_new_modelo")
         with create_d:
+            novo_modelo = st.text_input("Modelo do caminhão", key="fretado_new_modelo")
+        with create_e:
             nova_observacao = st.text_input(
                 "Observação do caminhão",
                 key="fretado_new_observacao",
@@ -2881,10 +2900,14 @@ def page_fretados() -> None:
                 nova_placa,
                 novo_modelo,
                 nova_observacao,
+                caminhao_existente_id,
             )
-            mensagem = "Fretado e caminhão exclusivo adicionados." if caminhao_criado_id else (
-                "Fretado adicionado. Agora selecione um caminhão existente para vinculá-lo."
-            )
+            if caminhao_existente_id:
+                mensagem = "Fretado adicionado e caminhão trazido da frota comum."
+            elif caminhao_criado_id:
+                mensagem = "Fretado e caminhão exclusivo adicionados."
+            else:
+                mensagem = "Fretado adicionado. Você pode vincular um caminhão depois."
             _set_flash("success", mensagem)
             st.session_state["fretado_reset_create_form"] = True
         except Exception as exc:
@@ -2894,7 +2917,7 @@ def page_fretados() -> None:
 
     registros = _cache_listar_fretados_com_caminhoes()
     fretados_ativos = [item for item in registros if item.get("colaborador_ativo")]
-    caminhoes_ativos = _cache_listar_caminhoes(ativos_only=True)
+    caminhoes_ativos = _cache_listar_caminhoes_gerais(ativos_only=True)
 
     st.markdown("#### Vincular caminhão existente")
     if fretados_ativos and caminhoes_ativos:
