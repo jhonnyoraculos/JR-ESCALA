@@ -580,6 +580,39 @@ def _inject_css() -> None:
       line-height: 1.4;
       overflow-wrap: anywhere;
     }
+    .jr-period-status {
+      width: 100%;
+      flex-direction: column;
+      align-items: stretch;
+      justify-content: center;
+      gap: 5px;
+    }
+    .jr-period-status__label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      font-size: 12px;
+      line-height: 1.2;
+    }
+    .jr-period-status__percent {
+      color: #52708f;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .jr-period-progress {
+      width: 100%;
+      height: 6px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #d9e4f1;
+      box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08);
+    }
+    .jr-period-progress__fill {
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #1990ff, #0d5ca8);
+    }
     div[data-testid="stHorizontalBlock"]:has(> div[data-testid="stColumn"] .jr-cell)
       .stButton > button {
       min-height: 38px;
@@ -849,6 +882,39 @@ def _cell(container, value: object, nowrap: bool = False, extra_class: str = "")
         classe = f"{classe} {extra_class}"
     container.markdown(
         f'<div class="{classe}">{html.escape(texto)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _period_status_cell(container, item: dict) -> None:
+    status = item.get("status") or "-"
+    if status != "Em andamento":
+        _cell(container, status, nowrap=True)
+        return
+
+    inicio = svc.parse_date(item.get("data_inicio"))
+    fim = svc.parse_date(item.get("data_fim"))
+    if not inicio or not fim or fim < inicio:
+        _cell(container, status, nowrap=True)
+        return
+
+    total_dias = (fim - inicio).days + 1
+    dias_decorridos = (date.today() - inicio).days + 1
+    percentual = max(0, min(100, round(dias_decorridos * 100 / total_dias)))
+    container.markdown(
+        f"""
+        <div class="jr-cell jr-period-status">
+          <div class="jr-period-status__label">
+            <span>Em andamento</span>
+            <span class="jr-period-status__percent">{percentual}%</span>
+          </div>
+          <div class="jr-period-progress" role="progressbar"
+               aria-label="Progresso do período" aria-valuemin="0"
+               aria-valuemax="100" aria-valuenow="{percentual}">
+            <div class="jr-period-progress__fill" style="width:{percentual}%"></div>
+          </div>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
@@ -3098,7 +3164,7 @@ def page_ferias() -> None:
             _cell(cols[1], item.get("data_inicio") or "-", nowrap=True)
             _cell(cols[2], item.get("data_fim") or "-", nowrap=True)
             _cell(cols[3], item.get("observacao") or "-")
-            _cell(cols[4], item.get("status") or "-")
+            _period_status_cell(cols[4], item)
             item_id = item.get("id")
             if st.session_state.get("ferias_confirm_excluir") == item_id:
                 cols[5].caption("Excluir estas férias?")
@@ -3274,7 +3340,7 @@ def page_atestados() -> None:
         _cell(cols[2], item.get("dias_ausencia") or "-", nowrap=True)
         _cell(cols[3], item.get("data_fim") or "-", nowrap=True)
         _cell(cols[4], item.get("observacao") or "-")
-        _cell(cols[5], item.get("status") or "-", nowrap=True)
+        _period_status_cell(cols[5], item)
         item_id = item.get("id")
         if st.session_state.get("atestado_confirm_excluir") == item_id:
             cols[6].caption("Excluir este atestado?")
