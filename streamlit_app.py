@@ -1196,7 +1196,7 @@ def _sync_initial_data_once() -> bool:
     return True
 
 
-_DATABASE_SCHEMA_VERSION = "2026-10-07.2"
+_DATABASE_SCHEMA_VERSION = "2026-10-09.1"
 
 
 def _database_error_hint(exc: Exception) -> str:
