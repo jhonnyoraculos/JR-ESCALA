@@ -112,14 +112,21 @@ def exportar_log_para_excel(registros: list[dict]) -> Path:
     cabecalho = [
         "Data Carregamento",
         "Data Saída",
+        "Retorno Previsto",
         "Motorista",
         "Ajudante",
         "Placa",
         "Rota",
+        "Duração/Observação",
+        "Observação extra",
+        "Cor da observação",
+        "Revisado",
         "Duração planejada (dias)",
         "Duração efetiva (dias)",
         "Status",
+        "Finalizado em",
         "Resumo histórico",
+        "Ajustes",
     ]
     ws.append(cabecalho)
     if Font:
@@ -130,14 +137,21 @@ def exportar_log_para_excel(registros: list[dict]) -> Path:
             [
                 item.get("data_br"),
                 item.get("data_saida_br"),
+                item.get("data_fim_br"),
                 item.get("motorista"),
                 item.get("ajudante"),
                 item.get("placa"),
                 item.get("rota"),
+                item.get("observacao"),
+                item.get("observacao_extra"),
+                item.get("observacao_cor"),
+                "Sim" if item.get("revisado") else "Não",
                 item.get("duracao_planejada"),
                 item.get("duracao_efetiva"),
                 item.get("status"),
+                item.get("finalizado_em_br"),
                 item.get("resumo"),
+                " | ".join(item.get("ajustes_texto") or []),
             ]
         )
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)

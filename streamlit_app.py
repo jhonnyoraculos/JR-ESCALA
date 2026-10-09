@@ -926,6 +926,32 @@ def _period_status_cell(container, item: dict) -> None:
     )
 
 
+def _render_log_status(item: dict) -> None:
+    status = item.get("status") or "-"
+    if status != "Em andamento":
+        st.write(f"Status: {status}")
+        return
+
+    percentual = max(0, min(100, int(item.get("progresso_percentual") or 0)))
+    status_texto = html.escape(item.get("status_texto") or "")
+    st.markdown(
+        f"""
+        <div class="jr-period-status" style="margin:8px 0 12px">
+          <div class="jr-period-status__label">
+            <span><strong>Em andamento</strong> · {status_texto}</span>
+            <span class="jr-period-status__percent">{percentual}%</span>
+          </div>
+          <div class="jr-period-progress" role="progressbar"
+               aria-label="Progresso da viagem" aria-valuemin="0"
+               aria-valuemax="100" aria-valuenow="{percentual}">
+            <div class="jr-period-progress__fill" style="width:{percentual}%"></div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _periodo_finalizado(item: dict) -> bool:
     data_fim = svc.parse_date(item.get("data_fim"))
     return bool(data_fim and data_fim < date.today())
@@ -3713,13 +3739,14 @@ def page_colaboradores() -> None:
 
 def page_log() -> None:
     st.subheader("LOG de escalas")
+    st.caption("Os filtros de período usam a data de saída da viagem.")
 
     col1, col2, col3 = st.columns(3)
     with col1:
         sem_inicio = st.checkbox("Sem data início", value=True, key="log_sem_inicio")
         data_inicio_val = st.date_input(
             "Data início",
-            value=date.today(),
+            value=_today_local(),
             key="log_data_inicio",
             disabled=sem_inicio,
         )
@@ -3728,13 +3755,17 @@ def page_log() -> None:
         sem_fim = st.checkbox("Sem data fim", value=True, key="log_sem_fim")
         data_fim_val = st.date_input(
             "Data fim",
-            value=date.today(),
+            value=_today_local(),
             key="log_data_fim",
             disabled=sem_fim,
         )
         data_fim = None if sem_fim else data_fim_val.isoformat()
     with col3:
-        status = st.selectbox("Status", ["Em andamento", "Finalizados", "Todos"], key="log_status")
+        status = st.selectbox(
+            "Status",
+            ["Em andamento", "Agendados", "Finalizados", "Todos"],
+            key="log_status",
+        )
 
     motoristas = _cache_listar_colaboradores_por_funcao("Motorista")
     ajudantes = _cache_listar_colaboradores_por_funcao("Ajudante")
@@ -3816,12 +3847,28 @@ def page_log() -> None:
         with st.container():
             st.markdown(f"**{item.get('data_br')}** - {item.get('rota')} - {item.get('placa')}")
             st.write(f"{item.get('motorista')} | {item.get('ajudante')}")
-            st.write(f"Status: {item.get('status')} {item.get('status_texto')}")
+            _render_log_status(item)
             st.write(f"Saída: {item.get('data_saida_br')} | Previsto: {item.get('data_fim_br')}")
             st.write(
                 f"Planejado: {item.get('duracao_planejada')} | Efetivo: {item.get('duracao_efetiva')}"
             )
+            st.write(f"Duração/observação: {item.get('observacao') or '-'}")
+            if item.get("observacao_extra"):
+                st.write(f"Observação extra: {item.get('observacao_extra')}")
+            st.caption(
+                "Revisado: "
+                + ("Sim" if item.get("revisado") else "Não")
+                + (
+                    f" | Finalizado em: {item.get('finalizado_em_br')}"
+                    if item.get("finalizado_em")
+                    else ""
+                )
+            )
             st.write(f"Resumo: {item.get('resumo')}")
+            if item.get("ajustes_texto"):
+                with st.expander("Histórico de ajustes"):
+                    for detalhe in item["ajustes_texto"]:
+                        st.write(f"• {detalhe}")
 
             with st.form(f"log_colab_{item['id']}"):
                 mot_opts = [svc.VALOR_SEM_MOTORISTA] + [
@@ -3951,44 +3998,26 @@ def page_log() -> None:
                     st.rerun()
 
             item_id = item["id"]
-            confirmando_liberacao = st.session_state.get("log_confirm_liberar") == item_id
+            confirmando_finalizacao = st.session_state.get("log_confirm_finalizar") == item_id
             confirmando_exclusao = st.session_state.get("log_confirm_excluir") == item_id
             action_cols = st.columns(2)
-            if confirmando_liberacao:
-                action_cols[0].caption("Liberar este carregamento agora?")
+            if confirmando_finalizacao:
+                action_cols[0].caption("Finalizar esta viagem e liberar os colaboradores?")
                 if action_cols[0].button(
-                    "Confirmar", key=f"log_liberar_yes_{item_id}", use_container_width=True
+                    "Confirmar", key=f"log_finalizar_yes_{item_id}", use_container_width=True
                 ):
                     try:
-                        registro = _cache_obter_carregamento(item_id)
-                        if not registro:
-                            _set_flash("error", "Carregamento não encontrado.")
-                            st.rerun()
-                        observacao_padrao = (registro.get("observacao") or "0").strip()
-                        duracao_planejada = svc.OBSERVACAO_DURACAO.get(observacao_padrao, 0)
-                        ajustes_map = svc.listar_ajustes_por_carregamentos([item_id])
-                        ajustes = ajustes_map.get(item_id, [])
-                        duracao_atual = (
-                            ajustes[-1]["duracao_nova"] if ajustes else duracao_planejada
-                        )
-                        svc.registrar_ajuste_rota(
-                            item_id, duracao_atual, 0, "Liberado agora"
-                        )
-                        data_inicio_iso = svc.obter_data_saida_registro(registro)
-                        inicio_dt = svc.parse_date(data_inicio_iso) or date.today()
-                        svc.atualizar_bloqueios_para_ajuste(
-                            item_id, inicio_dt.isoformat(), liberar_imediato=True
-                        )
-                        _set_flash("success", "Carregamento liberado.")
+                        svc.finalizar_carregamento(item_id)
+                        _set_flash("success", "Viagem finalizada e colaboradores liberados.")
                     except Exception as exc:
-                        _set_flash("error", f"Erro ao liberar: {exc}")
-                    st.session_state.pop("log_confirm_liberar", None)
+                        _set_flash("error", f"Erro ao finalizar: {exc}")
+                    st.session_state.pop("log_confirm_finalizar", None)
                     _clear_cached_data()
                     st.rerun()
                 if action_cols[1].button(
-                    "Cancelar", key=f"log_liberar_no_{item_id}", use_container_width=True
+                    "Cancelar", key=f"log_finalizar_no_{item_id}", use_container_width=True
                 ):
-                    st.session_state.pop("log_confirm_liberar", None)
+                    st.session_state.pop("log_confirm_finalizar", None)
                     st.rerun()
             elif confirmando_exclusao:
                 action_cols[0].caption("Excluir este carregamento?")
@@ -4014,13 +4043,13 @@ def page_log() -> None:
                     st.session_state.pop("log_confirm_excluir", None)
                     st.rerun()
             else:
-                if item.get("status") != "Finalizado":
+                if item.get("status") == "Em andamento":
                     action_cols[0].button(
-                        "Liberar agora",
-                        key=f"log_liberar_{item_id}",
+                        "Finalizar viagem",
+                        key=f"log_finalizar_{item_id}",
                         use_container_width=True,
                         on_click=_request_confirm,
-                        args=("log_confirm_liberar", item_id),
+                        args=("log_confirm_finalizar", item_id),
                     )
                 action_cols[1].button(
                     "Excluir carregamento",

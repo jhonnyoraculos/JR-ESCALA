@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from threading import Lock
@@ -8,6 +8,7 @@ from typing import Any, Iterable
 import os
 import re
 import unicodedata
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .db import DBError, UPLOAD_DIR, get_connection, insert_and_get_id
 
@@ -67,6 +68,18 @@ OBS_MARCADORES = [
 OBS_MARCADORES_MAP = {label: cor for label, cor in OBS_MARCADORES}
 
 _PREENCHIMENTO_AUTOMATICO_LOCK = Lock()
+try:
+    LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
+except ZoneInfoNotFoundError:  # Windows sem o pacote opcional tzdata
+    LOCAL_TIMEZONE = timezone(timedelta(hours=-3))
+
+
+def _hoje_local() -> date:
+    return datetime.now(LOCAL_TIMEZONE).date()
+
+
+def _agora_local_iso() -> str:
+    return datetime.now(LOCAL_TIMEZONE).isoformat(timespec="minutes")
 
 DIAS_SEMANA = [
     ("segunda", "Segunda"),
@@ -158,6 +171,18 @@ def data_iso_para_br(data_iso: str | None) -> str:
         return datetime.strptime(data_iso, "%Y-%m-%d").strftime("%d/%m/%Y")
     except ValueError:
         return data_iso
+
+
+def data_hora_iso_para_br(valor: str | None) -> str:
+    if not valor:
+        return ""
+    try:
+        data_hora = datetime.fromisoformat(valor)
+        if data_hora.tzinfo is not None:
+            data_hora = data_hora.astimezone(LOCAL_TIMEZONE)
+        return data_hora.strftime("%d/%m/%Y %H:%M")
+    except ValueError:
+        return valor
 
 
 def data_br_para_iso(data_br: str | None) -> str | None:
@@ -1675,6 +1700,20 @@ def remover_carregamento(carregamento_id: int) -> None:
         conn.commit()
 
 
+def finalizar_carregamento(carregamento_id: int) -> None:
+    """Finaliza explicitamente a viagem e libera os colaboradores vinculados."""
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE carregamentos SET finalizado_em = ? WHERE id = ?;",
+            (_agora_local_iso(), carregamento_id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError("Carregamento nÃ£o encontrado. Atualize a pÃ¡gina e tente novamente.")
+        cur.execute("DELETE FROM bloqueios WHERE carregamento_id = ?;", (carregamento_id,))
+        conn.commit()
+
+
 def remover_carregamento_completo(carregamento_id: int) -> None:
     with get_connection() as conn:
         cur = conn.cursor()
@@ -2503,6 +2542,9 @@ def consultar_log_carregamentos(filtros: dict) -> list[dict]:
                car.placa,
                car.observacao,
                car.observacao_extra,
+               car.observacao_cor,
+               car.revisado,
+               car.finalizado_em,
                car.motorista_id,
                car.ajudante_id,
                mot.nome AS motorista_nome,
@@ -2516,10 +2558,10 @@ def consultar_log_carregamentos(filtros: dict) -> list[dict]:
     ]
     params: list = []
     if filtros.get("data_inicio"):
-        query.append("AND car.data >= ?")
+        query.append("AND COALESCE(car.data_saida, car.data) >= ?")
         params.append(filtros["data_inicio"])
     if filtros.get("data_fim"):
-        query.append("AND car.data <= ?")
+        query.append("AND COALESCE(car.data_saida, car.data) <= ?")
         params.append(filtros["data_fim"])
     if filtros.get("motorista_id"):
         query.append("AND car.motorista_id = ?")
@@ -2527,7 +2569,7 @@ def consultar_log_carregamentos(filtros: dict) -> list[dict]:
     if filtros.get("placa"):
         query.append("AND UPPER(car.placa) = ?")
         params.append(filtros["placa"].upper())
-    query.append("ORDER BY car.data DESC, car.id DESC")
+    query.append("ORDER BY COALESCE(car.data_saida, car.data) DESC, car.id DESC")
 
     with get_connection(dict_rows=True) as conn:
         cur = conn.cursor()
@@ -2535,7 +2577,7 @@ def consultar_log_carregamentos(filtros: dict) -> list[dict]:
         registros = [dict(row) for row in cur.fetchall()]
 
     ajustes_map = listar_ajustes_por_carregamentos([reg["id"] for reg in registros])
-    hoje = date.today()
+    hoje = _hoje_local()
     resultado: list[dict] = []
 
     for registro in registros:
@@ -2552,12 +2594,12 @@ def consultar_log_carregamentos(filtros: dict) -> list[dict]:
         data_fim_dt = data_inicio_dt + timedelta(days=duracao_efetiva)
         data_fim_iso = data_fim_dt.isoformat()
 
-        finalizado_manual = bool(ajustes) and duracao_efetiva <= 0
-        if finalizado_manual:
+        finalizado_manual_legado = bool(ajustes) and duracao_efetiva <= 0
+        if registro.get("finalizado_em") or finalizado_manual_legado:
             status = "Finalizado"
         elif hoje < data_inicio_dt:
-            status = "Em andamento"
-        elif hoje < data_fim_dt:
+            status = "Agendado"
+        elif hoje <= data_fim_dt:
             status = "Em andamento"
         else:
             status = "Finalizado"
@@ -2568,14 +2610,32 @@ def consultar_log_carregamentos(filtros: dict) -> list[dict]:
                 continue
             if status_filtro == "Finalizados" and status != "Finalizado":
                 continue
+            if status_filtro == "Agendados" and status != "Agendado":
+                continue
 
         restante = max((data_fim_dt - hoje).days, 0)
         andamento_texto = ""
+        progresso_percentual = 0
         if status == "Em andamento":
+            total_dias = max((data_fim_dt - data_inicio_dt).days + 1, 1)
+            dias_decorridos = max((hoje - data_inicio_dt).days + 1, 1)
+            progresso_percentual = max(
+                0, min(100, round(dias_decorridos * 100 / total_dias))
+            )
             if restante > 0:
                 andamento_texto = f"{observacao_padrao or 'ROTA'} - faltando {restante}"
             else:
                 andamento_texto = f"{observacao_padrao or 'ROTA'} - retorna hoje"
+
+        ajustes_texto = []
+        for ajuste in ajustes:
+            detalhe = (
+                f"{ajuste.get('data_ajuste')}: "
+                f"{ajuste.get('duracao_anterior')} → {ajuste.get('duracao_nova')} dias"
+            )
+            if ajuste.get("observacao_ajuste"):
+                detalhe += f" ({ajuste['observacao_ajuste']})"
+            ajustes_texto.append(detalhe)
 
         ajudante_nome = formatar_ajudante_nome(
             registro.get("ajudante_nome") or DISPLAY_VAZIO,
@@ -2603,12 +2663,20 @@ def consultar_log_carregamentos(filtros: dict) -> list[dict]:
                 "motorista_id": registro.get("motorista_id"),
                 "ajudante_id": registro.get("ajudante_id"),
                 "observacao": observacao_padrao,
+                "observacao_extra": registro.get("observacao_extra") or "",
+                "observacao_cor": registro.get("observacao_cor") or "",
+                "revisado": bool(registro.get("revisado")),
                 "duracao_planejada": duracao_planejada,
                 "duracao_efetiva": duracao_efetiva,
                 "status": status,
                 "status_texto": andamento_texto if status == "Em andamento" else "",
+                "progresso_percentual": progresso_percentual,
+                "dias_restantes": restante,
+                "finalizado_em": registro.get("finalizado_em"),
+                "finalizado_em_br": data_hora_iso_para_br(registro.get("finalizado_em")),
                 "resumo": montar_resumo_ajustes(duracao_planejada, ajustes),
                 "ajustes": ajustes,
+                "ajustes_texto": ajustes_texto,
                 "log_vazio": not tem_dados,
             }
         )

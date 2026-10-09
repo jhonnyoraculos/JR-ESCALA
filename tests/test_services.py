@@ -103,6 +103,71 @@ class ServiceCrudTests(unittest.TestCase):
                 "0",
             )
 
+    def test_log_starts_on_departure_tracks_progress_and_allows_finalization(self):
+        futuro_id = services.salvar_carregamento(
+            "2026-10-08",
+            "R.20 - FUTURA",
+            "FUT-1A23",
+            self.motorista,
+            self.ajudante,
+            "ROTA 3 DIAS",
+            observacao_extra="Carga frágil",
+            observacao_cor="#FFF59D",
+            data_saida="2026-10-12",
+            revisado=True,
+        )
+        andamento_id = services.salvar_carregamento(
+            "2026-10-08",
+            "R.21 - EM VIAGEM",
+            "AND-4B56",
+            self.motorista,
+            self.ajudante,
+            "ROTA 2 DIAS",
+            data_saida="2026-10-09",
+        )
+        services.criar_bloqueios_para_carregamento(
+            andamento_id,
+            "2026-10-09",
+            [self.motorista, self.ajudante],
+            "ROTA 2 DIAS",
+        )
+
+        with mock.patch.object(services, "_hoje_local", return_value=date(2026, 10, 9)):
+            em_andamento = services.consultar_log_carregamentos(
+                {"status": "Em andamento"}
+            )
+            agendados = services.consultar_log_carregamentos({"status": "Agendados"})
+            filtrado_por_saida = services.consultar_log_carregamentos(
+                {
+                    "status": "Todos",
+                    "data_inicio": "2026-10-12",
+                    "data_fim": "2026-10-12",
+                }
+            )
+
+        self.assertEqual([item["id"] for item in em_andamento], [andamento_id])
+        self.assertEqual(em_andamento[0]["progresso_percentual"], 50)
+        self.assertEqual([item["id"] for item in agendados], [futuro_id])
+        self.assertEqual([item["id"] for item in filtrado_por_saida], [futuro_id])
+        self.assertEqual(agendados[0]["observacao_extra"], "Carga frágil")
+        self.assertEqual(agendados[0]["observacao_cor"], "#FFF59D")
+        self.assertTrue(agendados[0]["revisado"])
+
+        services.finalizar_carregamento(andamento_id)
+        with mock.patch.object(services, "_hoje_local", return_value=date(2026, 10, 9)):
+            finalizados = services.consultar_log_carregamentos(
+                {"status": "Finalizados"}
+            )
+        finalizado = next(item for item in finalizados if item["id"] == andamento_id)
+        self.assertTrue(finalizado["finalizado_em"])
+        with db.get_connection() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM bloqueios WHERE carregamento_id = ?;",
+                (andamento_id,),
+            )
+            self.assertEqual(cursor.fetchone()[0], 0)
+
     def test_sync_requested_collaborators_preserves_fretados_and_is_idempotent(self):
         services.atualizar_colaborador(
             self.motorista,

@@ -335,6 +335,13 @@ def _postgres_schema_is_current(cur) -> bool:
                 SELECT 1
                 FROM information_schema.columns
                 WHERE table_schema = current_schema()
+                  AND table_name = 'carregamentos'
+                  AND column_name = 'finalizado_em'
+            )
+            AND EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
                   AND table_name = 'folgas'
                   AND column_name = 'data_saida'
             )
@@ -434,6 +441,7 @@ def init_db() -> None:
                     observacao_extra TEXT,
                     observacao_cor TEXT,
                     revisado INTEGER NOT NULL DEFAULT 0,
+                    finalizado_em TEXT,
                     UNIQUE(data, rota, placa)
                 );
                 """
@@ -537,6 +545,7 @@ def init_db() -> None:
             cur.execute(
                 "ALTER TABLE carregamentos ADD COLUMN IF NOT EXISTS revisado INTEGER NOT NULL DEFAULT 0;"
             )
+            cur.execute("ALTER TABLE carregamentos ADD COLUMN IF NOT EXISTS finalizado_em TEXT;")
             cur.execute("ALTER TABLE folgas ADD COLUMN IF NOT EXISTS data_saida TEXT;")
             cur.execute("ALTER TABLE rotas_semanais ADD COLUMN IF NOT EXISTS origem TEXT NOT NULL DEFAULT 'local';")
             cur.execute("ALTER TABLE rotas_semanais ADD COLUMN IF NOT EXISTS origem_id TEXT;")
@@ -634,6 +643,7 @@ def init_db() -> None:
                 observacao_extra TEXT,
                 observacao_cor TEXT,
                 revisado INTEGER NOT NULL DEFAULT 0,
+                finalizado_em TEXT,
                 FOREIGN KEY(motorista_id) REFERENCES colaboradores(id),
                 FOREIGN KEY(ajudante_id) REFERENCES colaboradores(id),
                 UNIQUE(data, rota, placa)
@@ -747,6 +757,8 @@ def init_db() -> None:
         colunas_carregamentos = {row[1] for row in cur.fetchall()}
         if "revisado" not in colunas_carregamentos:
             cur.execute("ALTER TABLE carregamentos ADD COLUMN revisado INTEGER NOT NULL DEFAULT 0;")
+        if "finalizado_em" not in colunas_carregamentos:
+            cur.execute("ALTER TABLE carregamentos ADD COLUMN finalizado_em TEXT;")
         cur.execute("PRAGMA table_info(folgas);")
         colunas_folgas = {row[1] for row in cur.fetchall()}
         if "data_saida" not in colunas_folgas:
