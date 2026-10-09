@@ -756,7 +756,7 @@ def _inject_css() -> None:
 
 def _render_topbar() -> None:
     logo_uri = _data_uri(LOGO_PATH)
-    hoje = svc.data_iso_para_extenso(date.today().isoformat())
+    hoje = svc.data_iso_para_extenso(_today_local().isoformat())
     st.markdown(
         f"""
         <div class="topbar">
@@ -796,7 +796,7 @@ def _render_flash() -> None:
 
 def _to_date(value: str | None) -> date:
     parsed = svc.parse_date(value or "")
-    return parsed or date.today()
+    return parsed or _today_local()
 
 
 def _optional_date_input(label: str, value_iso: str | None, key: str) -> str | None:
@@ -804,7 +804,7 @@ def _optional_date_input(label: str, value_iso: str | None, key: str) -> str | N
     with col2:
         sem_data = st.checkbox("Sem data", value=value_iso is None, key=f"{key}_none")
     with col1:
-        default_date = _to_date(value_iso) if value_iso else date.today()
+        default_date = _to_date(value_iso) if value_iso else _today_local()
         picked = st.date_input(label, value=default_date, key=key, disabled=sem_data)
     return None if sem_data else picked.isoformat()
 
@@ -901,12 +901,12 @@ def _period_status_cell(container, item: dict) -> None:
 
     inicio = svc.parse_date(item.get("data_inicio"))
     fim = svc.parse_date(item.get("data_fim"))
-    if not inicio or not fim or fim < inicio:
+    if not inicio or not fim or fim <= inicio:
         _cell(container, status, nowrap=True)
         return
 
-    total_dias = (fim - inicio).days + 1
-    dias_decorridos = (date.today() - inicio).days + 1
+    total_dias = (fim - inicio).days
+    dias_decorridos = (_today_local() - inicio).days + 1
     percentual = max(0, min(100, round(dias_decorridos * 100 / total_dias)))
     container.markdown(
         f"""
@@ -954,7 +954,7 @@ def _render_log_status(item: dict) -> None:
 
 def _periodo_finalizado(item: dict) -> bool:
     data_fim = svc.parse_date(item.get("data_fim"))
-    return bool(data_fim and data_fim < date.today())
+    return bool(data_fim and data_fim <= _today_local())
 
 
 def _render_generated_download(
@@ -1010,11 +1010,20 @@ def _render_generated_download(
 
 
 def _init_state() -> None:
-    st.session_state.setdefault("carreg_data_iso", date.today().isoformat())
+    st.session_state.setdefault("carreg_data_iso", _today_local().isoformat())
     st.session_state.setdefault(
         "carreg_data_saida_iso",
         svc.calcular_data_saida_carregamento(st.session_state["carreg_data_iso"]),
     )
+    data_base = _to_date(st.session_state["carreg_data_iso"])
+    data_saida = _to_date(st.session_state["carreg_data_saida_iso"])
+    st.session_state.setdefault("oficina_data", data_base)
+    st.session_state.setdefault("oficina_saida", data_saida)
+    st.session_state.setdefault("folga_data", data_base)
+    st.session_state.setdefault("escala_data", data_base)
+    st.session_state.setdefault("escala_saida", data_saida)
+    st.session_state.setdefault("rotas_feriados_data_base_v2", data_base)
+    st.session_state.setdefault("rotas_feriados_data_saida_v2", data_saida)
     st.session_state.setdefault("permitir_mot_aj", False)
     st.session_state.setdefault("carreg_edit_id", None)
     st.session_state.setdefault("carreg_last_selected_id", None)
@@ -1027,6 +1036,43 @@ def _init_state() -> None:
     st.session_state.setdefault("ferias_edit_id", None)
     st.session_state.setdefault("atestado_edit_id", None)
     st.session_state.setdefault("colab_edit_id", None)
+
+
+def _propagar_datas_ativas(
+    data_base_iso: str,
+    data_saida_iso: str,
+    *,
+    base_alterada: bool,
+    saida_alterada: bool,
+) -> None:
+    """Mantem as demais telas alinhadas com as datas de Carregamentos."""
+    if base_alterada:
+        data_base = _to_date(data_base_iso)
+        for key in (
+            "oficina_data",
+            "folga_data",
+            "escala_data",
+            "rotas_feriados_data_base_v2",
+        ):
+            st.session_state[key] = data_base
+        _clear_widget_state(
+            (
+                "oficina_form_data",
+                "folga_form_data",
+                "escala_form_data",
+                "rotas_form_",
+            )
+        )
+
+    if saida_alterada:
+        data_saida = _to_date(data_saida_iso)
+        for key in (
+            "oficina_saida",
+            "escala_saida",
+            "rotas_feriados_data_saida_v2",
+        ):
+            st.session_state[key] = data_saida
+        _clear_widget_state(("oficina_form_saida",))
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -1325,21 +1371,39 @@ def page_carregamentos() -> None:
             key="permitir_mot_aj",
         )
 
-    if prev_data and prev_data != data_iso:
+    base_alterada = bool(prev_data and prev_data != data_iso)
+    saida_alterada = bool(prev_saida and prev_saida != data_saida_iso)
+    if base_alterada:
         st.session_state["carreg_pending_edit_id"] = None
         st.session_state["carreg_pending_reset_form"] = True
         st.session_state.pop("carreg_select", None)
         st.session_state["carreg_last_selected_id"] = None
-    if prev_saida and prev_saida != data_saida_iso:
+    if saida_alterada:
         st.session_state["carreg_pending_edit_id"] = None
         st.session_state["carreg_pending_reset_form"] = True
 
     st.session_state["carreg_data_iso"] = data_iso
     st.session_state["carreg_data_saida_iso"] = data_saida_iso
+    _propagar_datas_ativas(
+        data_iso,
+        data_saida_iso,
+        base_alterada=base_alterada,
+        saida_alterada=saida_alterada,
+    )
+
+    if saida_alterada:
+        try:
+            svc.atualizar_data_saida_do_dia(data_iso, data_saida_iso)
+        except Exception as exc:
+            st.error(f"Erro ao atualizar a data de saída do dia: {exc}")
+        else:
+            _clear_cached_data()
 
     registros = _cache_listar_carregamentos(data_iso)
-    if not registros:
-        svc.preencher_carregamentos_automaticos(data_iso, data_saida_iso)
+    inseridos_automaticamente = svc.preencher_carregamentos_automaticos(
+        data_iso, data_saida_iso
+    )
+    if inseridos_automaticamente:
         _clear_route_and_load_caches()
         registros = _cache_listar_carregamentos(data_iso)
 
@@ -1921,11 +1985,15 @@ def page_oficinas() -> None:
     prev_data = st.session_state.get("oficina_data_iso")
     col1, col2 = st.columns(2)
     with col1:
-        data_iso = st.date_input("Data", value=_to_date(date.today().isoformat()), key="oficina_data").isoformat()
+        data_iso = st.date_input(
+            "Data",
+            value=_to_date(st.session_state.get("carreg_data_iso")),
+            key="oficina_data",
+        ).isoformat()
     with col2:
         data_saida_iso = st.date_input(
             "Data saída",
-            value=_to_date(svc.calcular_data_saida_padrao(data_iso) or data_iso),
+            value=_to_date(st.session_state.get("carreg_data_saida_iso") or data_iso),
             key="oficina_saida",
         ).isoformat()
 
@@ -2163,8 +2231,14 @@ def page_folgas() -> None:
     _apply_pending_edit_target("folga_edit_id")
     st.subheader("Folgas")
     prev_data = st.session_state.get("folga_data_iso")
-    data_iso = st.date_input("Data", value=_to_date(date.today().isoformat()), key="folga_data").isoformat()
-    data_saida_iso = svc.calcular_data_saida_padrao(data_iso)
+    data_iso = st.date_input(
+        "Data",
+        value=_to_date(st.session_state.get("carreg_data_iso")),
+        key="folga_data",
+    ).isoformat()
+    data_saida_iso = st.session_state.get(
+        "carreg_data_saida_iso"
+    ) or svc.calcular_data_saida_padrao(data_iso)
     st.caption(f"Data base {svc.data_iso_para_br(data_iso)}")
 
     if prev_data and prev_data != data_iso:
@@ -2342,11 +2416,15 @@ def page_escala_cd() -> None:
     prev_data = st.session_state.get("escala_data_iso")
     col1, col2 = st.columns(2)
     with col1:
-        data_iso = st.date_input("Data", value=_to_date(date.today().isoformat()), key="escala_data").isoformat()
+        data_iso = st.date_input(
+            "Data",
+            value=_to_date(st.session_state.get("carreg_data_iso")),
+            key="escala_data",
+        ).isoformat()
     with col2:
         data_saida_iso = st.date_input(
             "Data saída",
-            value=_to_date(svc.calcular_data_saida_padrao(data_iso) or data_iso),
+            value=_to_date(st.session_state.get("carreg_data_saida_iso") or data_iso),
             key="escala_saida",
         ).isoformat()
 
@@ -2575,14 +2653,17 @@ def page_rotas_semanais() -> None:
     with holiday_base_col:
         data_rotas = st.date_input(
             "Data das rotas",
-            value=hoje,
+            value=_to_date(st.session_state.get("carreg_data_iso") or hoje.isoformat()),
             key="rotas_feriados_data_base_v2",
             help="Seleciona as rotas semanais correspondentes a este dia.",
         )
     with holiday_departure_col:
         data_saida_feriados = st.date_input(
             "Data saída",
-            value=_to_date(svc.calcular_data_saida_carregamento(hoje.isoformat())),
+            value=_to_date(
+                st.session_state.get("carreg_data_saida_iso")
+                or svc.calcular_data_saida_carregamento(hoje.isoformat())
+            ),
             key="rotas_feriados_data_saida_v2",
             help="A verificação começa na saída e considera toda a duração escolhida de cada rota.",
         )
@@ -2721,15 +2802,21 @@ def page_rotas_semanais() -> None:
                 _set_flash("success", "Rota semanal atualizada.")
             else:
                 svc.adicionar_rota_semana(dia_form, rota_texto, destino, observacao)
-                svc.sincronizar_rota_semana_com_carregamentos(
-                    st.session_state.get("carreg_data_iso"),
+                sincronizada = svc.sincronizar_rota_semana_com_carregamentos(
+                    data_rotas_iso,
                     dia_form,
                     rota_texto,
                     destino,
                     observacao,
-                    st.session_state.get("carreg_data_saida_iso"),
+                    data_saida_feriados.isoformat(),
                 )
-                _set_flash("success", "Rota semanal salva.")
+                if sincronizada:
+                    _set_flash(
+                        "success",
+                        "Rota semanal salva e adicionada aos carregamentos da data selecionada.",
+                    )
+                else:
+                    _set_flash("success", "Rota semanal salva.")
         except Exception as exc:
             _set_flash("error", f"Erro ao salvar: {exc}")
             st.rerun()
@@ -3151,6 +3238,9 @@ def page_fretados() -> None:
 def page_ferias() -> None:
     _apply_pending_edit_target("ferias_edit_id")
     st.subheader("Férias")
+    st.caption(
+        "A data final é a data de retorno. Nesse dia o colaborador volta a ficar disponível."
+    )
     registros = _cache_listar_ferias()
     colaboradores = _cache_listar_colaboradores(ativos_only=True)
 
@@ -3169,7 +3259,7 @@ def page_ferias() -> None:
     elif isinstance(session_inicio, str) and session_inicio:
         data_inicio_ref = session_inicio
     disponibilidade = _cache_disponibilidade(
-        data_inicio_ref or date.today().isoformat(), (("ferias_id", edit_id),) if edit_id else ()
+        data_inicio_ref or _today_local().isoformat(), (("ferias_id", edit_id),) if edit_id else ()
     )
     indis = disponibilidade.get("motoristas", set()).union(disponibilidade.get("ajudantes", set()))
 
@@ -3201,13 +3291,21 @@ def page_ferias() -> None:
         with col_b:
             data_inicio = st.date_input(
                 "Data início",
-                value=_to_date(edit_item.get("data_inicio") if edit_item else date.today().isoformat()),
+                value=_to_date(
+                    edit_item.get("data_inicio")
+                    if edit_item
+                    else _today_local().isoformat()
+                ),
                 key="ferias_form_inicio",
             ).isoformat()
         with col_c:
             data_fim = st.date_input(
                 "Data fim",
-                value=_to_date(edit_item.get("data_fim") if edit_item else date.today().isoformat()),
+                value=_to_date(
+                    edit_item.get("data_fim")
+                    if edit_item
+                    else (_today_local() + timedelta(days=1)).isoformat()
+                ),
                 key="ferias_form_fim",
             ).isoformat()
         observacao = st.text_input(
@@ -3317,7 +3415,7 @@ def page_atestados() -> None:
     _apply_pending_edit_target("atestado_edit_id")
     st.subheader("Atestados")
     st.caption(
-        "O colaborador fica indisponível em todo o período informado, incluindo o último dia."
+        "A data final é a data de retorno. Nesse dia o colaborador volta a ficar disponível."
     )
     registros = _cache_listar_atestados()
     colaboradores = _cache_listar_colaboradores(ativos_only=True)
@@ -3360,7 +3458,7 @@ def page_atestados() -> None:
                 value=_to_date(
                     edit_item.get("data_inicio")
                     if edit_item
-                    else date.today().isoformat()
+                    else _today_local().isoformat()
                 ),
                 key="atestado_form_inicio",
             )
@@ -3370,20 +3468,20 @@ def page_atestados() -> None:
                 value=_to_date(
                     edit_item.get("data_fim")
                     if edit_item
-                    else data_inicio_valor.isoformat()
+                    else (data_inicio_valor + timedelta(days=1)).isoformat()
                 ),
                 key="atestado_form_fim",
             )
         data_inicio = data_inicio_valor.isoformat()
         data_fim = data_fim_valor.isoformat()
-        dias_ausencia = (data_fim_valor - data_inicio_valor).days + 1
+        dias_ausencia = (data_fim_valor - data_inicio_valor).days
         if dias_ausencia > 0:
             st.caption(
-                f"Período de {dias_ausencia} dia(s). Bloqueado até "
-                f"{svc.data_iso_para_br(data_fim)} (inclusive)."
+                f"Período de {dias_ausencia} dia(s). Retorno em "
+                f"{svc.data_iso_para_br(data_fim)}."
             )
         else:
-            st.error("A data final não pode ser anterior à data inicial.")
+            st.error("A data final deve ser posterior à data inicial.")
         observacao = st.text_input(
             "Observação",
             value=(edit_item.get("observacao") or "") if edit_item else "",
@@ -3396,7 +3494,7 @@ def page_atestados() -> None:
             _set_flash("error", "Selecione o colaborador.")
             st.rerun()
         if dias_ausencia < 1:
-            _set_flash("error", "A data final não pode ser anterior à data inicial.")
+            _set_flash("error", "A data final deve ser posterior à data inicial.")
             st.rerun()
         try:
             if edit_item:
@@ -3941,7 +4039,7 @@ def page_log() -> None:
                         observacao = (registro.get("observacao") or "0").strip() or "0"
                         svc.atualizar_carregamento(
                             item["id"],
-                            registro.get("data") or date.today().isoformat(),
+                            registro.get("data") or _today_local().isoformat(),
                             registro.get("data_saida"),
                             registro.get("rota") or "",
                             registro.get("placa"),
@@ -3954,7 +4052,7 @@ def page_log() -> None:
                         svc.remover_bloqueios_por_carregamento(item["id"])
                         svc.criar_bloqueios_para_carregamento(
                             item["id"],
-                            registro.get("data") or date.today().isoformat(),
+                            registro.get("data") or _today_local().isoformat(),
                             [motorista_id, ajudante_id],
                             observacao,
                         )
@@ -3991,7 +4089,7 @@ def page_log() -> None:
                         duracao_atual = ajustes[-1]["duracao_nova"] if ajustes else duracao_planejada
                         svc.registrar_ajuste_rota(item["id"], duracao_atual, int(duracao_nova), observacao)
                         data_inicio_iso = svc.obter_data_saida_registro(registro)
-                        inicio_dt = svc.parse_date(data_inicio_iso) or date.today()
+                        inicio_dt = svc.parse_date(data_inicio_iso) or _today_local()
                         nova_data_fim = inicio_dt + timedelta(days=int(duracao_nova))
                         svc.atualizar_bloqueios_para_ajuste(
                             item["id"], nova_data_fim.isoformat(), False
@@ -4101,7 +4199,9 @@ def _render_navigation() -> None:
         elif pagina == "LOG":
             page_log()
 
-        _assistentes_sidebar(st.session_state.get("carreg_data_iso", date.today().isoformat()))
+        _assistentes_sidebar(
+            st.session_state.get("carreg_data_iso", _today_local().isoformat())
+        )
 
 
 def main() -> None:

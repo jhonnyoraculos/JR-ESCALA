@@ -498,7 +498,7 @@ class ServiceCrudTests(unittest.TestCase):
         self.assertEqual(rotas[0]["data_saida"], "2026-10-08")
         self.assertEqual(rotas[0]["observacao"], "ROTA 3 DIAS")
 
-    def test_atestado_crud_blocks_the_complete_inclusive_period(self):
+    def test_atestado_uses_final_date_as_return_date(self):
         atestado_id = services.adicionar_atestado(
             self.motorista,
             "2026-10-07",
@@ -508,7 +508,7 @@ class ServiceCrudTests(unittest.TestCase):
         registro = next(
             item for item in services.listar_atestados() if item["id"] == atestado_id
         )
-        self.assertEqual(registro["data_fim"], "2026-10-09")
+        self.assertEqual(registro["data_fim"], "2026-10-10")
         self.assertEqual(registro["dias_ausencia"], 3)
 
         for data_bloqueada in ("2026-10-07", "2026-10-08", "2026-10-09"):
@@ -534,8 +534,14 @@ class ServiceCrudTests(unittest.TestCase):
             item for item in services.listar_atestados() if item["id"] == atestado_id
         )
         self.assertEqual(atualizado["data_inicio"], "2026-10-08")
-        self.assertEqual(atualizado["data_fim"], "2026-10-09")
+        self.assertEqual(atualizado["data_fim"], "2026-10-10")
         self.assertEqual(atualizado["observacao"], "Período corrigido")
+
+        with mock.patch.object(services, "_hoje_local", return_value=date(2026, 10, 10)):
+            finalizado = next(
+                item for item in services.listar_atestados() if item["id"] == atestado_id
+            )
+        self.assertEqual(finalizado["status"], "Finalizado")
 
         services.remover_atestado(atestado_id)
         self.assertEqual(services.listar_atestados(), [])
@@ -543,6 +549,65 @@ class ServiceCrudTests(unittest.TestCase):
             self.motorista,
             services.verificar_disponibilidade("2026-10-08")["motoristas"],
         )
+
+    def test_departure_date_is_propagated_to_operational_records(self):
+        services.salvar_carregamento(
+            "2026-10-09",
+            "R.10 - TESTE",
+            None,
+            None,
+            None,
+            "0",
+            data_saida="2026-10-10",
+        )
+        services.salvar_folga(
+            "2026-10-09", self.ajudante, data_saida="2026-10-10"
+        )
+        services.salvar_oficina(
+            "2026-10-09",
+            None,
+            "ABC-1D23",
+            "Revisão",
+            data_saida="2026-10-10",
+        )
+
+        atualizados = services.atualizar_data_saida_do_dia(
+            "2026-10-09", "2026-10-12"
+        )
+
+        self.assertEqual(atualizados["carregamentos"], 1)
+        self.assertEqual(atualizados["folgas"], 1)
+        self.assertEqual(atualizados["oficinas"], 1)
+        self.assertEqual(
+            services.listar_carregamentos("2026-10-09")[0]["data_saida"],
+            "2026-10-12",
+        )
+        self.assertEqual(
+            services.listar_folgas("2026-10-09")[0]["data_saida"],
+            "2026-10-12",
+        )
+        self.assertEqual(
+            services.listar_oficinas("2026-10-09")[0]["data_saida"],
+            "2026-10-12",
+        )
+
+    def test_vacation_final_date_releases_collaborator_and_archives_period(self):
+        ferias_id = services.adicionar_ferias(
+            self.ajudante, "2026-10-07", "2026-10-10", "Descanso"
+        )
+        self.assertIn(
+            self.ajudante,
+            services.verificar_disponibilidade("2026-10-09")["ajudantes"],
+        )
+        self.assertNotIn(
+            self.ajudante,
+            services.verificar_disponibilidade("2026-10-10")["ajudantes"],
+        )
+        with mock.patch.object(services, "_hoje_local", return_value=date(2026, 10, 10)):
+            registro = next(
+                item for item in services.listar_ferias() if item["id"] == ferias_id
+            )
+        self.assertEqual(registro["status"], "Finalizada")
 
     def test_supporting_cadastros_crud_and_protected_route(self):
         caminhao_id = services.add_caminhao("abc-1d23", "Modelo A", "Novo")

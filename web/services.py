@@ -392,7 +392,9 @@ def verificar_disponibilidade(data_iso: str, ignorar: dict[str, int] | None = No
             elif tipo in {"ferias", "atestado"}:
                 d_inicio = parse_date(inicio)
                 d_fim = parse_date(fim)
-                if not (d_inicio and d_fim and d_inicio <= alvo <= d_fim):
+                # A data final representa o retorno do colaborador. Portanto,
+                # ele fica indisponível até o dia anterior a ela.
+                if not (d_inicio and d_fim and d_inicio <= alvo < d_fim):
                     continue
             if pessoa_id:
                 resultado["motoristas"].add(pessoa_id)
@@ -1291,15 +1293,19 @@ def remover_folga(folga_id: int) -> None:
 # Férias
 
 
-def validar_periodo(data_inicio: str, data_fim: str) -> None:
+def validar_periodo(
+    data_inicio: str, data_fim: str, *, permitir_mesmo_dia: bool = True
+) -> None:
     dt_inicio = datetime.strptime(data_inicio, "%Y-%m-%d").date()
     dt_fim = datetime.strptime(data_fim, "%Y-%m-%d").date()
     if dt_inicio > dt_fim:
         raise ValueError("Data inicial não pode ser posterior à data final.")
+    if not permitir_mesmo_dia and dt_inicio == dt_fim:
+        raise ValueError("A data final deve ser posterior à data inicial.")
 
 
 def adicionar_ferias(colaborador_id: int, data_inicio: str, data_fim: str, observacao: str | None) -> int:
-    validar_periodo(data_inicio, data_fim)
+    validar_periodo(data_inicio, data_fim, permitir_mesmo_dia=False)
     observacao_db = (observacao or "").strip() or None
     with get_connection() as conn:
         cur = conn.cursor()
@@ -1316,7 +1322,7 @@ def adicionar_ferias(colaborador_id: int, data_inicio: str, data_fim: str, obser
 
 
 def atualizar_ferias(registro_id: int, colaborador_id: int, data_inicio: str, data_fim: str, observacao: str | None) -> None:
-    validar_periodo(data_inicio, data_fim)
+    validar_periodo(data_inicio, data_fim, permitir_mesmo_dia=False)
     observacao_db = (observacao or "").strip() or None
     with get_connection() as conn:
         cur = conn.cursor()
@@ -1356,10 +1362,10 @@ def listar_ferias() -> list[dict]:
             """
         )
         registros = [dict(row) for row in cur.fetchall()]
-    hoje = date.today()
+    hoje = _hoje_local()
     for item in registros:
         fim = parse_date(item.get("data_fim"))
-        if fim and fim < hoje:
+        if fim and fim <= hoje:
             item["status"] = "Finalizada"
             item["status_class"] = "ok"
         else:
@@ -1381,7 +1387,8 @@ def calcular_data_fim_atestado(data_inicio: str, dias_ausencia: int) -> str:
         raise ValueError("A quantidade de dias deve ser um número inteiro.") from exc
     if dias < 1:
         raise ValueError("A quantidade de dias deve ser maior que zero.")
-    return (inicio + timedelta(days=dias - 1)).isoformat()
+    # A data final é a data de retorno (limite exclusivo do afastamento).
+    return (inicio + timedelta(days=dias)).isoformat()
 
 
 def adicionar_atestado(
@@ -1399,8 +1406,8 @@ def adicionar_atestado(
             SELECT 1
             FROM atestados
             WHERE colaborador_id = ?
-              AND data_inicio <= ?
-              AND data_fim >= ?
+              AND data_inicio < ?
+              AND data_fim > ?
             LIMIT 1;
             """,
             (colaborador_id, data_fim, data_inicio),
@@ -1437,8 +1444,8 @@ def atualizar_atestado(
             SELECT 1
             FROM atestados
             WHERE colaborador_id = ?
-              AND data_inicio <= ?
-              AND data_fim >= ?
+              AND data_inicio < ?
+              AND data_fim > ?
               AND id <> ?
             LIMIT 1;
             """,
@@ -1496,14 +1503,16 @@ def listar_atestados() -> list[dict]:
             """
         )
         registros = [dict(row) for row in cur.fetchall()]
-    hoje = date.today()
+    hoje = _hoje_local()
     for item in registros:
         inicio = parse_date(item.get("data_inicio"))
         fim = parse_date(item.get("data_fim"))
+        if inicio and fim:
+            item["dias_ausencia"] = max(0, (fim - inicio).days)
         if inicio and inicio > hoje:
             item["status"] = "Agendado"
             item["status_class"] = "warn"
-        elif fim and fim < hoje:
+        elif fim and fim <= hoje:
             item["status"] = "Finalizado"
             item["status_class"] = "ok"
         else:
@@ -1552,7 +1561,7 @@ def criar_bloqueios_para_carregamento(
 
 
 def limpar_bloqueios_expirados() -> None:
-    hoje = date.today().isoformat()
+    hoje = _hoje_local().isoformat()
     with get_connection() as conn:
         cur = conn.cursor()
         cur.execute("DELETE FROM bloqueios WHERE data_fim <= ?;", (hoje,))
@@ -1560,6 +1569,28 @@ def limpar_bloqueios_expirados() -> None:
 
 
 # Carregamentos
+
+
+def atualizar_data_saida_do_dia(data_iso: str, data_saida_iso: str) -> dict[str, int]:
+    """Propaga a data de saída para todos os registros operacionais do dia."""
+    data_base = _normalizar_data_iso(data_iso)
+    data_saida = _normalizar_data_iso(data_saida_iso)
+    if not data_base or not data_saida:
+        raise ValueError("Informe datas válidas para atualizar a saída do dia.")
+    if data_saida < data_base:
+        raise ValueError("A data de saída não pode ser anterior à data base.")
+
+    atualizados: dict[str, int] = {}
+    with get_connection() as conn:
+        cur = conn.cursor()
+        for tabela in ("carregamentos", "folgas", "oficinas"):
+            cur.execute(
+                f"UPDATE {tabela} SET data_saida = ? WHERE data = ?;",
+                (data_saida, data_base),
+            )
+            atualizados[tabela] = max(cur.rowcount, 0)
+        conn.commit()
+    return atualizados
 
 
 def salvar_carregamento(
@@ -1799,7 +1830,7 @@ def duplicar_carregamento(carregamento_id: int) -> int:
     registro = obter_carregamento(carregamento_id)
     if not registro:
         raise ValueError("Carregamento não encontrado.")
-    data_base = registro.get("data") or date.today().isoformat()
+    data_base = registro.get("data") or _hoje_local().isoformat()
     rota_original = (registro.get("rota") or "").strip()
     nova_rota = rota_original
     numero_part = rota_original
@@ -1844,7 +1875,7 @@ def obter_data_saida_registro(registro: dict) -> str:
         elif saida_dt:
             return valor
     if not base:
-        return date.today().isoformat()
+        return _hoje_local().isoformat()
     dias = 3 if base.weekday() == 4 else 1
     return (base + timedelta(days=dias)).isoformat()
 
