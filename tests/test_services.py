@@ -125,6 +125,15 @@ class ServiceCrudTests(unittest.TestCase):
             "ROTA 2 DIAS",
             data_saida="2026-10-09",
         )
+        vencido_id = services.salvar_carregamento(
+            "2026-10-05",
+            "R.22 - FINALIZAÇÃO AUTOMÁTICA",
+            "FIN-7C89",
+            self.motorista,
+            self.ajudante,
+            "ROTA 2 DIAS",
+            data_saida="2026-10-06",
+        )
         services.criar_bloqueios_para_carregamento(
             andamento_id,
             "2026-10-09",
@@ -152,6 +161,22 @@ class ServiceCrudTests(unittest.TestCase):
         self.assertEqual(agendados[0]["observacao_extra"], "Carga frágil")
         self.assertEqual(agendados[0]["observacao_cor"], "#FFF59D")
         self.assertTrue(agendados[0]["revisado"])
+
+        with mock.patch.object(services, "_hoje_local", return_value=date(2026, 10, 9)):
+            finalizados_automaticos = services.consultar_log_carregamentos(
+                {"status": "Finalizados"}
+            )
+        finalizado_automatico = next(
+            item for item in finalizados_automaticos if item["id"] == vencido_id
+        )
+        self.assertEqual(
+            finalizado_automatico["finalizado_em"],
+            "2026-10-08T00:00-03:00",
+        )
+        self.assertEqual(
+            services.obter_carregamento(vencido_id)["finalizado_em"],
+            "2026-10-08T00:00-03:00",
+        )
 
         services.finalizar_carregamento(andamento_id)
         with mock.patch.object(services, "_hoje_local", return_value=date(2026, 10, 9)):

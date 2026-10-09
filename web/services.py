@@ -1714,6 +1714,28 @@ def finalizar_carregamento(carregamento_id: int) -> None:
         conn.commit()
 
 
+def _registrar_finalizacoes_automaticas(finalizacoes: dict[int, str]) -> None:
+    if not finalizacoes:
+        return
+    carregamento_ids = list(finalizacoes)
+    placeholders = ",".join(["?"] * len(carregamento_ids))
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.executemany(
+            """
+            UPDATE carregamentos
+            SET finalizado_em = ?
+            WHERE id = ? AND finalizado_em IS NULL;
+            """,
+            [(finalizado_em, carregamento_id) for carregamento_id, finalizado_em in finalizacoes.items()],
+        )
+        cur.execute(
+            f"DELETE FROM bloqueios WHERE carregamento_id IN ({placeholders});",
+            carregamento_ids,
+        )
+        conn.commit()
+
+
 def remover_carregamento_completo(carregamento_id: int) -> None:
     with get_connection() as conn:
         cur = conn.cursor()
@@ -2579,6 +2601,7 @@ def consultar_log_carregamentos(filtros: dict) -> list[dict]:
     ajustes_map = listar_ajustes_por_carregamentos([reg["id"] for reg in registros])
     hoje = _hoje_local()
     resultado: list[dict] = []
+    finalizacoes_automaticas: dict[int, str] = {}
 
     for registro in registros:
         observacao_padrao = (registro.get("observacao") or "0").strip()
@@ -2594,8 +2617,9 @@ def consultar_log_carregamentos(filtros: dict) -> list[dict]:
         data_fim_dt = data_inicio_dt + timedelta(days=duracao_efetiva)
         data_fim_iso = data_fim_dt.isoformat()
 
+        finalizado_em = registro.get("finalizado_em")
         finalizado_manual_legado = bool(ajustes) and duracao_efetiva <= 0
-        if registro.get("finalizado_em") or finalizado_manual_legado:
+        if finalizado_em or finalizado_manual_legado:
             status = "Finalizado"
         elif hoje < data_inicio_dt:
             status = "Agendado"
@@ -2603,6 +2627,12 @@ def consultar_log_carregamentos(filtros: dict) -> list[dict]:
             status = "Em andamento"
         else:
             status = "Finalizado"
+            finalizado_em = datetime.combine(
+                data_fim_dt + timedelta(days=1),
+                datetime.min.time(),
+                LOCAL_TIMEZONE,
+            ).isoformat(timespec="minutes")
+            finalizacoes_automaticas[registro["id"]] = finalizado_em
 
         status_filtro = filtros.get("status")
         if status_filtro and status_filtro != "Todos":
@@ -2672,14 +2702,16 @@ def consultar_log_carregamentos(filtros: dict) -> list[dict]:
                 "status_texto": andamento_texto if status == "Em andamento" else "",
                 "progresso_percentual": progresso_percentual,
                 "dias_restantes": restante,
-                "finalizado_em": registro.get("finalizado_em"),
-                "finalizado_em_br": data_hora_iso_para_br(registro.get("finalizado_em")),
+                "finalizado_em": finalizado_em,
+                "finalizado_em_br": data_hora_iso_para_br(finalizado_em),
                 "resumo": montar_resumo_ajustes(duracao_planejada, ajustes),
                 "ajustes": ajustes,
                 "ajustes_texto": ajustes_texto,
                 "log_vazio": not tem_dados,
             }
         )
+
+    _registrar_finalizacoes_automaticas(finalizacoes_automaticas)
 
     if filtros.get("status") == "Em andamento":
         resultado.sort(key=lambda item: item.get("log_vazio", False))

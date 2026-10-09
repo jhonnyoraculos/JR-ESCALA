@@ -3741,7 +3741,7 @@ def page_log() -> None:
     st.subheader("LOG de escalas")
     st.caption("Os filtros de período usam a data de saída da viagem.")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
         sem_inicio = st.checkbox("Sem data início", value=True, key="log_sem_inicio")
         data_inicio_val = st.date_input(
@@ -3760,12 +3760,18 @@ def page_log() -> None:
             disabled=sem_fim,
         )
         data_fim = None if sem_fim else data_fim_val.isoformat()
-    with col3:
-        status = st.selectbox(
-            "Status",
-            ["Em andamento", "Agendados", "Finalizados", "Todos"],
-            key="log_status",
-        )
+    status_aba = st.segmented_control(
+        "Abas do LOG",
+        ["Em andamento", "Agendadas", "Finalizadas", "Todas"],
+        default="Em andamento",
+        key="log_status_aba",
+        width="stretch",
+    )
+    status = {
+        "Agendadas": "Agendados",
+        "Finalizadas": "Finalizados",
+        "Todas": "Todos",
+    }.get(status_aba or "Em andamento", "Em andamento")
 
     motoristas = _cache_listar_colaboradores_por_funcao("Motorista")
     ajudantes = _cache_listar_colaboradores_por_funcao("Ajudante")
